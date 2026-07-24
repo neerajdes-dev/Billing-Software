@@ -1,5 +1,8 @@
+from datetime import date
 from pydantic import BaseModel
 from typing import List
+from pydantic import BaseModel
+from typing import Optional
 
 class SignupRequest(BaseModel):
     business_name: str
@@ -58,18 +61,16 @@ class SaleCreate(BaseModel):
     products: List[SaleProduct]
 class DealerCreate(BaseModel):
     dealer_name: str
-    mobile: str | None = None
-    email: str | None = None
-    gst_number: str | None = None
-    address: str | None = None
-    bill_date: str | None = None
-    bill_amount: float = 0
+    mobile: str
+    email: Optional[str] = None
+    gst_number: Optional[str] = None
+    address: Optional[str] = None
 class DealerBillCreate(BaseModel):
     dealer_id: int
-    bill_number: str | None = None
     bill_amount: float
-    bill_date: str | None = None
-    note: str | None = None
+    bill_date: date
+    bill_number: Optional[str] = None
+    remarks: Optional[str] = None
 class DealerBillUpdate(BaseModel):
     bill_number: str | None = None
     bill_amount: float
