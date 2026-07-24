@@ -22,6 +22,7 @@ def run_database_migrations():
         "ALTER TABLE dealers ADD COLUMN IF NOT EXISTS gst_number VARCHAR",
         "ALTER TABLE dealers ADD COLUMN IF NOT EXISTS bill_amount DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE dealers ADD COLUMN IF NOT EXISTS bill_date TIMESTAMP",
+        "ALTER TABLE dealers ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
         "ALTER TABLE dealer_payments ADD COLUMN IF NOT EXISTS reference VARCHAR",
         "ALTER TABLE dealer_payments ADD COLUMN IF NOT EXISTS note VARCHAR",
         "ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS reference VARCHAR",
