@@ -375,31 +375,70 @@ def get_dealers(db: Session = Depends(get_db)):
 
 
 @app.post("/dealer-bills")
-def add_dealer_bill(data: schemas.DealerBillCreate, db: Session = Depends(get_db)):
-    dealer = db.query(models.Dealer).filter(models.Dealer.id == data.dealer_id).first()
-    if not dealer:
-        raise HTTPException(status_code=404, detail="Dealer not found")
-    if data.bill_amount <= 0:
-        raise HTTPException(
-            status_code=400, detail="Bill amount must be greater than zero"
+def add_dealer_bill(
+    data: schemas.DealerBillCreate,
+    db: Session = Depends(get_db),
+):
+    try:
+        dealer = (
+            db.query(models.Dealer).filter(models.Dealer.id == data.dealer_id).first()
         )
-    bill_date = datetime.now()
-    if data.bill_date:
-        try:
-            bill_date = datetime.strptime(data.bill_date, "%Y-%m-%d")
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid bill date") from exc
-    bill = models.DealerBill(
-        dealer_id=data.dealer_id,
-        bill_number=data.bill_number,
-        bill_amount=data.bill_amount,
-        bill_date=bill_date,
-        note=data.note,
-    )
-    db.add(bill)
-    db.commit()
-    db.refresh(bill)
-    return {"message": "Dealer bill saved", "id": bill.id}
+
+        if not dealer:
+            raise HTTPException(
+                status_code=404,
+                detail="Dealer not found",
+            )
+
+        if data.bill_amount <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Bill amount must be greater than zero",
+            )
+
+        bill_date = datetime.now()
+
+        if data.bill_date:
+            try:
+                bill_date = datetime.strptime(
+                    data.bill_date,
+                    "%Y-%m-%d",
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid bill date. Use YYYY-MM-DD.",
+                ) from exc
+
+        bill = models.DealerBill(
+            dealer_id=data.dealer_id,
+            bill_number=data.bill_number,
+            bill_amount=data.bill_amount,
+            bill_date=bill_date,
+            note=data.note,
+        )
+
+        db.add(bill)
+        db.commit()
+        db.refresh(bill)
+
+        return {
+            "message": "Dealer bill saved successfully",
+            "id": bill.id,
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception as error:
+        db.rollback()
+        print("DEALER BILL ERROR:", repr(error))
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Dealer bill database error: {str(error)}",
+        ) from error
 
 
 @app.get("/dealers/{dealer_id}/ledger")
