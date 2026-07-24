@@ -66,3 +66,8 @@ export const getExpenses = (fromDate = "", toDate = "") => {
   return request(`/expenses${query ? `?${query}` : ""}`);
 };
 export const deleteExpense = (expenseId) => request(`/expenses/${expenseId}`, { method: "DELETE" });
+export const bulkUpdateItems = (items) => request("/items/bulk-update", { method: "PUT", body: JSON.stringify({ items }) });
+export const addDealerBill = (data) => request("/dealer-bills", { method: "POST", body: JSON.stringify(data) });
+export const updateDealerBill = (billId, data) => request(`/dealer-bills/${billId}`, { method: "PUT", body: JSON.stringify(data) });
+export const deleteDealerBill = (billId) => request(`/dealer-bills/${billId}`, { method: "DELETE" });
+export const getDealerLedger = (dealerId) => request(`/dealers/${dealerId}/ledger`);

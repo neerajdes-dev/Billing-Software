@@ -180,6 +180,13 @@ export default function CreateBill() {
     0
   );
 
+  const totalMrp = cart.reduce(
+    (sum, item) => sum + Number(item.mrp || item.sale_price || 0) * Number(item.quantity || 0),
+    0
+  );
+
+  const totalSaving = Math.max(totalMrp - subtotal, 0);
+
   const gst = cart.reduce((sum, item) => {
     const baseAmount =
       Number(item.sale_price || 0) * Number(item.quantity || 0);
@@ -224,9 +231,12 @@ export default function CreateBill() {
         const itemGst =
           (baseAmount * Number(item.gst_percent || 0)) / 100;
 
+        const lineMrp = Number(item.mrp || item.sale_price || 0) * Number(item.quantity || 0);
         return {
           ...item,
+          mrp: Number(item.mrp || item.sale_price || 0),
           rate: Number(item.sale_price || 0),
+          saving: Math.max(lineMrp - baseAmount, 0),
           amount: baseAmount + itemGst,
         };
       });
@@ -266,6 +276,8 @@ export default function CreateBill() {
         payment_mode: paymentMode,
 
         subtotal,
+        total_mrp: result.total_mrp || totalMrp,
+        total_saving: result.total_saving || totalSaving,
         gst_amount: gst,
         total_amount:
           result.final_amount ||
@@ -487,9 +499,9 @@ export default function CreateBill() {
                         <TableCell width={110}>
                           Quantity
                         </TableCell>
-                        <TableCell align="right">
-                          Rate
-                        </TableCell>
+                        <TableCell align="right">MRP</TableCell>
+                        <TableCell align="right">Sales Price</TableCell>
+                        <TableCell align="right">Saving</TableCell>
                         <TableCell align="right">
                           GST
                         </TableCell>
@@ -503,7 +515,7 @@ export default function CreateBill() {
                     <TableBody>
                       {!cart.length && (
                         <TableRow>
-                          <TableCell colSpan={6}>
+                          <TableCell colSpan={8}>
                             <Box
                               sx={{
                                 py: 7,
@@ -576,15 +588,12 @@ export default function CreateBill() {
                               />
                             </TableCell>
 
-                            <TableCell align="right">
-                              {money(item.sale_price)}
-                            </TableCell>
+                            <TableCell align="right">{money(item.mrp || item.sale_price)}</TableCell>
+                            <TableCell align="right">{money(item.sale_price)}</TableCell>
+                            <TableCell align="right"><Typography color="success.main" fontWeight={700}>{money(Math.max((Number(item.mrp || item.sale_price)-Number(item.sale_price))*Number(item.quantity||0),0))}</Typography></TableCell>
 
                             <TableCell align="right">
-                              {Number(
-                                item.gst_percent || 0
-                              ).toFixed(2)}
-                              %
+                              {Number(item.gst_percent || 0).toFixed(2)}%
                             </TableCell>
 
                             <TableCell align="right">
@@ -634,6 +643,8 @@ export default function CreateBill() {
                 </Typography>
 
                 <Stack spacing={1.7}>
+                  <Stack direction="row" justifyContent="space-between"><Typography color="text.secondary">Total MRP</Typography><Typography fontWeight={700}>{money(totalMrp)}</Typography></Stack>
+                  <Stack direction="row" justifyContent="space-between"><Typography color="success.main" fontWeight={700}>You Save</Typography><Typography color="success.main" fontWeight={800}>{money(totalSaving)}</Typography></Stack>
                   <Stack
                     direction="row"
                     justifyContent="space-between"
@@ -762,6 +773,8 @@ export default function CreateBill() {
             payment_mode:
               generatedInvoice.payment_mode,
             subtotal: generatedInvoice.subtotal,
+            total_mrp: generatedInvoice.total_mrp,
+            total_saving: generatedInvoice.total_saving,
             gst_amount:
               generatedInvoice.gst_amount,
             total_amount:

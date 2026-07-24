@@ -26,6 +26,7 @@ class ItemCreate(BaseModel):
     item_name: str
     barcode: str
     purchase_price: float
+    mrp: float
     sale_price: float
     gst_percent: float = 0
     stock: int
@@ -33,6 +34,18 @@ class ItemUpdate(ItemCreate):
     pass
 class ItemImport(BaseModel):
     items: List[ItemCreate]
+class BulkItemUpdateRow(BaseModel):
+    id: int
+    item_name: str | None = None
+    barcode: str | None = None
+    purchase_price: float | None = None
+    mrp: float | None = None
+    sale_price: float | None = None
+    gst_percent: float | None = None
+    stock_adjustment: int = 0
+    adjustment_reason: str = "Bulk update"
+class BulkItemUpdate(BaseModel):
+    items: List[BulkItemUpdateRow]
 class SaleProduct(BaseModel):
     item_id: int
     quantity: int
@@ -46,9 +59,22 @@ class SaleCreate(BaseModel):
 class DealerCreate(BaseModel):
     dealer_name: str
     mobile: str | None = None
+    email: str | None = None
+    gst_number: str | None = None
     address: str | None = None
     bill_date: str | None = None
+    bill_amount: float = 0
+class DealerBillCreate(BaseModel):
+    dealer_id: int
+    bill_number: str | None = None
     bill_amount: float
+    bill_date: str | None = None
+    note: str | None = None
+class DealerBillUpdate(BaseModel):
+    bill_number: str | None = None
+    bill_amount: float
+    bill_date: str | None = None
+    note: str | None = None
 class DealerPaymentCreate(BaseModel):
     dealer_id: int
     paid_amount: float

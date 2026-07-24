@@ -42,9 +42,20 @@ class Item(Base):
     item_name = Column(String, nullable=False)
     barcode = Column(String, unique=True, nullable=False)
     purchase_price = Column(Float, nullable=False)
+    mrp = Column(Float, nullable=False, default=0)
     sale_price = Column(Float, nullable=False)
     gst_percent = Column(Float, default=0)
     stock = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.now)
+
+class StockAdjustment(Base):
+    __tablename__ = "stock_adjustments"
+    id = Column(Integer, primary_key=True, index=True)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
+    previous_stock = Column(Integer, nullable=False)
+    adjustment = Column(Integer, nullable=False)
+    new_stock = Column(Integer, nullable=False)
+    reason = Column(String, nullable=False, default="Bulk update")
     created_at = Column(DateTime, default=datetime.now)
 
 class Sale(Base):
@@ -54,6 +65,8 @@ class Sale(Base):
     customer_name = Column(String)
     customer_mobile = Column(String)
     subtotal = Column(Float, default=0)
+    total_mrp = Column(Float, default=0)
+    total_saving = Column(Float, default=0)
     gst_amount = Column(Float, default=0)
     final_amount = Column(Float, default=0)
     payment_mode = Column(String, nullable=False)
@@ -68,9 +81,11 @@ class SaleItem(Base):
     item_id = Column(Integer, ForeignKey("items.id"))
     item_name = Column(String)
     quantity = Column(Integer)
+    mrp = Column(Float, default=0)
     rate = Column(Float)
     gst_percent = Column(Float)
     amount = Column(Float)
+    saving = Column(Float, default=0)
     sale = relationship("Sale", back_populates="items")
 
 class Dealer(Base):
@@ -78,10 +93,26 @@ class Dealer(Base):
     id = Column(Integer, primary_key=True, index=True)
     dealer_name = Column(String, nullable=False)
     mobile = Column(String)
+    email = Column(String)
+    gst_number = Column(String)
     address = Column(String)
+    created_at = Column(DateTime, default=datetime.now)
+    # legacy fields retained so existing deployments remain compatible
     bill_amount = Column(Float, default=0)
     bill_date = Column(DateTime, default=datetime.now)
+    bills = relationship("DealerBill", back_populates="dealer", cascade="all, delete-orphan")
     payments = relationship("DealerPayment", back_populates="dealer", cascade="all, delete-orphan")
+
+class DealerBill(Base):
+    __tablename__ = "dealer_bills"
+    id = Column(Integer, primary_key=True, index=True)
+    dealer_id = Column(Integer, ForeignKey("dealers.id"), nullable=False)
+    bill_number = Column(String)
+    bill_amount = Column(Float, nullable=False)
+    bill_date = Column(DateTime, default=datetime.now)
+    note = Column(String)
+    created_at = Column(DateTime, default=datetime.now)
+    dealer = relationship("Dealer", back_populates="bills")
 
 class DealerPayment(Base):
     __tablename__ = "dealer_payments"
