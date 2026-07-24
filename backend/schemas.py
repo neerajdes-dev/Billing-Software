@@ -70,7 +70,7 @@ class DealerBillCreate(BaseModel):
     bill_amount: float
     bill_date: date
     bill_number: Optional[str] = None
-    remarks: Optional[str] = None
+    note: Optional[str] = None
 class DealerBillUpdate(BaseModel):
     bill_number: str | None = None
     bill_amount: float
