@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from sqlalchemy import text, inspect
+from sqlalchemy import text
 
 from database import Base, engine, SessionLocal
 import models
@@ -16,43 +16,34 @@ from security import hash_password, verify_password
 Base.metadata.create_all(bind=engine)
 
 
-# Lightweight migration support for existing Sprint 3 databases.
-def ensure_column(table: str, column: str, definition: str):
-    try:
-        inspector = inspect(engine)
-        existing_columns = {item["name"] for item in inspector.get_columns(table)}
+def run_database_migrations():
+    migration_statements = [
+        "ALTER TABLE dealers ADD COLUMN IF NOT EXISTS email VARCHAR",
+        "ALTER TABLE dealers ADD COLUMN IF NOT EXISTS gst_number VARCHAR",
+        "ALTER TABLE dealers ADD COLUMN IF NOT EXISTS bill_amount DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE dealers ADD COLUMN IF NOT EXISTS bill_date TIMESTAMP",
+        "ALTER TABLE dealer_payments ADD COLUMN IF NOT EXISTS reference VARCHAR",
+        "ALTER TABLE dealer_payments ADD COLUMN IF NOT EXISTS note VARCHAR",
+        "ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS reference VARCHAR",
+        "ALTER TABLE items ADD COLUMN IF NOT EXISTS mrp DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE sales ADD COLUMN IF NOT EXISTS bill_date TIMESTAMP",
+        "ALTER TABLE sales ADD COLUMN IF NOT EXISTS total_mrp DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE sales ADD COLUMN IF NOT EXISTS total_saving DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS mrp DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS saving DOUBLE PRECISION DEFAULT 0",
+    ]
 
-        if column not in existing_columns:
-            with engine.begin() as connection:
-                connection.execute(
-                    text(
-                        f'ALTER TABLE "{table}" '
-                        f'ADD COLUMN IF NOT EXISTS "{column}" {definition}'
-                    )
-                )
+    with engine.begin() as connection:
+        for statement in migration_statements:
+            connection.execute(text(statement))
 
-            print(f"Added column: {table}.{column}")
-
-    except Exception as error:
-        print(f"Migration failed for {table}.{column}: {error}")
-        raise
+    print("Database migrations completed successfully")
 
 
-ensure_column("sales", "bill_date", "TIMESTAMP")
-ensure_column("dealer_payments", "reference", "VARCHAR")
-ensure_column("dealer_payments", "note", "VARCHAR")
-ensure_column("customer_payments", "reference", "VARCHAR")
-ensure_column("items", "mrp", "FLOAT DEFAULT 0")
-ensure_column("sales", "total_mrp", "FLOAT DEFAULT 0")
-ensure_column("sales", "total_saving", "FLOAT DEFAULT 0")
-ensure_column("sale_items", "mrp", "FLOAT DEFAULT 0")
-ensure_column("sale_items", "saving", "FLOAT DEFAULT 0")
-ensure_column("dealers", "email", "VARCHAR")
-ensure_column("dealers", "gst_number", "VARCHAR")
+run_database_migrations()
 
 app = FastAPI(title="Resolvent Billing Software API")
 
-# Read allowed frontend URLs from the environment
 cors_origins = [
     origin.strip()
     for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
@@ -90,6 +81,53 @@ def to_float(value: Any) -> float:
 @app.get("/")
 def home():
     return {"message": "Resolvent Billing Software API Running"}
+
+
+@app.get("/health")
+def health_check():
+    return {
+        "status": "ok",
+        "message": "Resolvent Billing Software API Running",
+        "cors_origins": cors_origins,
+    }
+
+
+@app.get("/debug/database")
+def debug_database(db: Session = Depends(get_db)):
+    database_info = (
+        db.execute(
+            text(
+                """
+            SELECT
+                current_database() AS database_name,
+                current_schema() AS schema_name
+            """
+            )
+        )
+        .mappings()
+        .first()
+    )
+
+    dealer_columns = (
+        db.execute(
+            text(
+                """
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'dealers'
+            ORDER BY ordinal_position
+            """
+            )
+        )
+        .mappings()
+        .all()
+    )
+
+    return {
+        "database": dict(database_info) if database_info else {},
+        "dealer_columns": [dict(column) for column in dealer_columns],
+    }
 
 
 @app.post("/signup")
@@ -199,7 +237,9 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
             raise HTTPException(status_code=404, detail="Item not found")
         current_stock = int(item.stock or 0)
         if current_stock < product.quantity:
-            raise HTTPException(status_code=400, detail=f"Stock not available for {item.item_name}")
+            raise HTTPException(
+                status_code=400, detail=f"Stock not available for {item.item_name}"
+            )
 
         rate = to_float(item.sale_price)
         mrp = max(to_float(item.mrp), rate)
@@ -215,16 +255,18 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
         total_saving += saving
         gst_amount += item_gst
         item.stock = current_stock - qty
-        sale_items.append({
-            "item_id": item.id,
-            "item_name": item.item_name,
-            "quantity": qty,
-            "mrp": mrp,
-            "rate": rate,
-            "gst_percent": item.gst_percent,
-            "amount": line_total,
-            "saving": saving,
-        })
+        sale_items.append(
+            {
+                "item_id": item.id,
+                "item_name": item.item_name,
+                "quantity": qty,
+                "mrp": mrp,
+                "rate": rate,
+                "gst_percent": item.gst_percent,
+                "amount": line_total,
+                "saving": saving,
+            }
+        )
 
     final_amount = subtotal + gst_amount
     selected_bill_date = datetime.now()
@@ -235,11 +277,16 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
             raise HTTPException(status_code=400, detail="Invalid bill date") from exc
 
     sale = models.Sale(
-        invoice_no=generate_invoice_no(), customer_name=data.customer_name,
-        customer_mobile=data.customer_mobile, subtotal=subtotal,
-        total_mrp=total_mrp, total_saving=total_saving,
-        gst_amount=gst_amount, final_amount=final_amount,
-        payment_mode=data.payment_mode, bill_date=selected_bill_date,
+        invoice_no=generate_invoice_no(),
+        customer_name=data.customer_name,
+        customer_mobile=data.customer_mobile,
+        subtotal=subtotal,
+        total_mrp=total_mrp,
+        total_saving=total_saving,
+        gst_amount=gst_amount,
+        final_amount=final_amount,
+        payment_mode=data.payment_mode,
+        bill_date=selected_bill_date,
         created_at=selected_bill_date,
     )
     db.add(sale)
@@ -249,11 +296,16 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(sale)
     return {
-        "message": "Bill generated successfully", "invoice_no": sale.invoice_no,
-        "sale_id": sale.id, "customer_name": sale.customer_name,
-        "customer_mobile": sale.customer_mobile, "subtotal": round(subtotal, 2),
-        "total_mrp": round(total_mrp, 2), "total_saving": round(total_saving, 2),
-        "gst_amount": round(gst_amount, 2), "final_amount": round(final_amount, 2),
+        "message": "Bill generated successfully",
+        "invoice_no": sale.invoice_no,
+        "sale_id": sale.id,
+        "customer_name": sale.customer_name,
+        "customer_mobile": sale.customer_mobile,
+        "subtotal": round(subtotal, 2),
+        "total_mrp": round(total_mrp, 2),
+        "total_saving": round(total_saving, 2),
+        "gst_amount": round(gst_amount, 2),
+        "final_amount": round(final_amount, 2),
         "payment_mode": sale.payment_mode,
         "bill_date": sale.bill_date.strftime("%Y-%m-%d") if sale.bill_date else None,
         "items": sale_items,
@@ -268,14 +320,18 @@ def get_sales(db: Session = Depends(get_db)):
 @app.post("/dealers")
 def add_dealer(data: schemas.DealerCreate, db: Session = Depends(get_db)):
     dealer = models.Dealer(
-        dealer_name=data.dealer_name, mobile=data.mobile, email=data.email,
-        gst_number=data.gst_number, address=data.address,
+        dealer_name=data.dealer_name,
+        mobile=data.mobile,
+        email=data.email,
+        gst_number=data.gst_number,
+        address=data.address,
         bill_amount=0,
     )
     db.add(dealer)
     db.commit()
     db.refresh(dealer)
     return dealer
+
 
 @app.get("/dealers")
 def get_dealers(db: Session = Depends(get_db)):
@@ -286,15 +342,22 @@ def get_dealers(db: Session = Depends(get_db)):
         legacy_bill_total = to_float(dealer.bill_amount) if not dealer.bills else 0
         bill_total = new_bill_total + legacy_bill_total
         paid = sum(to_float(p.paid_amount) for p in dealer.payments)
-        result.append({
-            "id": dealer.id, "dealer_name": dealer.dealer_name,
-            "mobile": dealer.mobile, "email": dealer.email,
-            "gst_number": dealer.gst_number, "address": dealer.address,
-            "bill_amount": round(bill_total, 2), "paid_amount": round(paid, 2),
-            "pending_amount": round(max(bill_total-paid, 0), 2),
-            "bill_count": len(dealer.bills),
-        })
+        result.append(
+            {
+                "id": dealer.id,
+                "dealer_name": dealer.dealer_name,
+                "mobile": dealer.mobile,
+                "email": dealer.email,
+                "gst_number": dealer.gst_number,
+                "address": dealer.address,
+                "bill_amount": round(bill_total, 2),
+                "paid_amount": round(paid, 2),
+                "pending_amount": round(max(bill_total - paid, 0), 2),
+                "bill_count": len(dealer.bills),
+            }
+        )
     return result
+
 
 @app.post("/dealer-bills")
 def add_dealer_bill(data: schemas.DealerBillCreate, db: Session = Depends(get_db)):
@@ -302,71 +365,161 @@ def add_dealer_bill(data: schemas.DealerBillCreate, db: Session = Depends(get_db
     if not dealer:
         raise HTTPException(status_code=404, detail="Dealer not found")
     if data.bill_amount <= 0:
-        raise HTTPException(status_code=400, detail="Bill amount must be greater than zero")
+        raise HTTPException(
+            status_code=400, detail="Bill amount must be greater than zero"
+        )
     bill_date = datetime.now()
     if data.bill_date:
-        try: bill_date = datetime.strptime(data.bill_date, "%Y-%m-%d")
-        except ValueError as exc: raise HTTPException(status_code=400, detail="Invalid bill date") from exc
-    bill = models.DealerBill(dealer_id=data.dealer_id, bill_number=data.bill_number,
-        bill_amount=data.bill_amount, bill_date=bill_date, note=data.note)
-    db.add(bill); db.commit(); db.refresh(bill)
-    return {"message":"Dealer bill saved", "id":bill.id}
+        try:
+            bill_date = datetime.strptime(data.bill_date, "%Y-%m-%d")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid bill date") from exc
+    bill = models.DealerBill(
+        dealer_id=data.dealer_id,
+        bill_number=data.bill_number,
+        bill_amount=data.bill_amount,
+        bill_date=bill_date,
+        note=data.note,
+    )
+    db.add(bill)
+    db.commit()
+    db.refresh(bill)
+    return {"message": "Dealer bill saved", "id": bill.id}
+
 
 @app.get("/dealers/{dealer_id}/ledger")
 def dealer_ledger(dealer_id: int, db: Session = Depends(get_db)):
     dealer = db.query(models.Dealer).filter(models.Dealer.id == dealer_id).first()
-    if not dealer: raise HTTPException(status_code=404, detail="Dealer not found")
-    bills=[{"id":b.id,"bill_number":b.bill_number,"bill_amount":b.bill_amount,
-      "bill_date":b.bill_date.isoformat() if b.bill_date else None,"note":b.note}
-      for b in sorted(dealer.bills,key=lambda x:x.bill_date or datetime.min,reverse=True)]
-    if not bills and to_float(dealer.bill_amount)>0:
-        bills=[{"id":None,"bill_number":"Legacy bill","bill_amount":dealer.bill_amount,
-          "bill_date":dealer.bill_date.isoformat() if dealer.bill_date else None,"note":"Migrated existing bill"}]
-    payments=[{"id":p.id,"paid_amount":p.paid_amount,"payment_mode":p.payment_mode,
-      "payment_date":p.payment_date.isoformat() if p.payment_date else None,
-      "reference":p.reference,"note":p.note}
-      for p in sorted(dealer.payments,key=lambda x:x.payment_date or datetime.min,reverse=True)]
-    total_bills=sum(to_float(x["bill_amount"]) for x in bills)
-    total_paid=sum(to_float(x["paid_amount"]) for x in payments)
-    return {"dealer":{"id":dealer.id,"dealer_name":dealer.dealer_name,"mobile":dealer.mobile,
-      "email":dealer.email,"gst_number":dealer.gst_number,"address":dealer.address},
-      "summary":{"total_bills":round(total_bills,2),"total_paid":round(total_paid,2),
-      "outstanding":round(max(total_bills-total_paid,0),2)},"bills":bills,"payments":payments}
+    if not dealer:
+        raise HTTPException(status_code=404, detail="Dealer not found")
+    bills = [
+        {
+            "id": b.id,
+            "bill_number": b.bill_number,
+            "bill_amount": b.bill_amount,
+            "bill_date": b.bill_date.isoformat() if b.bill_date else None,
+            "note": b.note,
+        }
+        for b in sorted(
+            dealer.bills, key=lambda x: x.bill_date or datetime.min, reverse=True
+        )
+    ]
+    if not bills and to_float(dealer.bill_amount) > 0:
+        bills = [
+            {
+                "id": None,
+                "bill_number": "Legacy bill",
+                "bill_amount": dealer.bill_amount,
+                "bill_date": dealer.bill_date.isoformat() if dealer.bill_date else None,
+                "note": "Migrated existing bill",
+            }
+        ]
+    payments = [
+        {
+            "id": p.id,
+            "paid_amount": p.paid_amount,
+            "payment_mode": p.payment_mode,
+            "payment_date": p.payment_date.isoformat() if p.payment_date else None,
+            "reference": p.reference,
+            "note": p.note,
+        }
+        for p in sorted(
+            dealer.payments, key=lambda x: x.payment_date or datetime.min, reverse=True
+        )
+    ]
+    total_bills = sum(to_float(x["bill_amount"]) for x in bills)
+    total_paid = sum(to_float(x["paid_amount"]) for x in payments)
+    return {
+        "dealer": {
+            "id": dealer.id,
+            "dealer_name": dealer.dealer_name,
+            "mobile": dealer.mobile,
+            "email": dealer.email,
+            "gst_number": dealer.gst_number,
+            "address": dealer.address,
+        },
+        "summary": {
+            "total_bills": round(total_bills, 2),
+            "total_paid": round(total_paid, 2),
+            "outstanding": round(max(total_bills - total_paid, 0), 2),
+        },
+        "bills": bills,
+        "payments": payments,
+    }
+
 
 @app.put("/dealer-bills/{bill_id}")
-def update_dealer_bill(bill_id:int,data:schemas.DealerBillUpdate,db:Session=Depends(get_db)):
-    bill=db.query(models.DealerBill).filter(models.DealerBill.id==bill_id).first()
-    if not bill: raise HTTPException(status_code=404,detail="Dealer bill not found")
-    if data.bill_amount<=0: raise HTTPException(status_code=400,detail="Bill amount must be greater than zero")
-    bill.bill_number=data.bill_number; bill.bill_amount=data.bill_amount; bill.note=data.note
+def update_dealer_bill(
+    bill_id: int, data: schemas.DealerBillUpdate, db: Session = Depends(get_db)
+):
+    bill = db.query(models.DealerBill).filter(models.DealerBill.id == bill_id).first()
+    if not bill:
+        raise HTTPException(status_code=404, detail="Dealer bill not found")
+    if data.bill_amount <= 0:
+        raise HTTPException(
+            status_code=400, detail="Bill amount must be greater than zero"
+        )
+    bill.bill_number = data.bill_number
+    bill.bill_amount = data.bill_amount
+    bill.note = data.note
     if data.bill_date:
-        try: bill.bill_date=datetime.strptime(data.bill_date,"%Y-%m-%d")
-        except ValueError as exc: raise HTTPException(status_code=400,detail="Invalid bill date") from exc
-    db.commit(); return {"message":"Dealer bill updated"}
+        try:
+            bill.bill_date = datetime.strptime(data.bill_date, "%Y-%m-%d")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid bill date") from exc
+    db.commit()
+    return {"message": "Dealer bill updated"}
+
 
 @app.delete("/dealer-bills/{bill_id}")
-def delete_dealer_bill(bill_id:int,db:Session=Depends(get_db)):
-    bill=db.query(models.DealerBill).filter(models.DealerBill.id==bill_id).first()
-    if not bill: raise HTTPException(status_code=404,detail="Dealer bill not found")
-    db.delete(bill); db.commit(); return {"message":"Dealer bill deleted"}
+def delete_dealer_bill(bill_id: int, db: Session = Depends(get_db)):
+    bill = db.query(models.DealerBill).filter(models.DealerBill.id == bill_id).first()
+    if not bill:
+        raise HTTPException(status_code=404, detail="Dealer bill not found")
+    db.delete(bill)
+    db.commit()
+    return {"message": "Dealer bill deleted"}
+
 
 @app.post("/dealer-payments")
-def add_dealer_payment(data: schemas.DealerPaymentCreate, db: Session = Depends(get_db)):
-    dealer=db.query(models.Dealer).filter(models.Dealer.id==data.dealer_id).first()
-    if not dealer: raise HTTPException(status_code=404,detail="Dealer not found")
-    total_bills=sum(to_float(b.bill_amount) for b in dealer.bills) or to_float(dealer.bill_amount)
-    paid=sum(to_float(p.paid_amount) for p in dealer.payments)
-    outstanding=max(total_bills-paid,0)
-    if data.paid_amount<=0: raise HTTPException(status_code=400,detail="Payment amount must be greater than zero")
-    if data.paid_amount>outstanding: raise HTTPException(status_code=400,detail=f"Payment cannot exceed outstanding amount of {outstanding:.2f}")
-    payment_date=datetime.now()
+def add_dealer_payment(
+    data: schemas.DealerPaymentCreate, db: Session = Depends(get_db)
+):
+    dealer = db.query(models.Dealer).filter(models.Dealer.id == data.dealer_id).first()
+    if not dealer:
+        raise HTTPException(status_code=404, detail="Dealer not found")
+    total_bills = sum(to_float(b.bill_amount) for b in dealer.bills) or to_float(
+        dealer.bill_amount
+    )
+    paid = sum(to_float(p.paid_amount) for p in dealer.payments)
+    outstanding = max(total_bills - paid, 0)
+    if data.paid_amount <= 0:
+        raise HTTPException(
+            status_code=400, detail="Payment amount must be greater than zero"
+        )
+    if data.paid_amount > outstanding:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Payment cannot exceed outstanding amount of {outstanding:.2f}",
+        )
+    payment_date = datetime.now()
     if data.payment_date:
-        try: payment_date=datetime.strptime(data.payment_date,"%Y-%m-%d")
-        except ValueError as exc: raise HTTPException(status_code=400,detail="Invalid payment date") from exc
-    payment=models.DealerPayment(dealer_id=data.dealer_id,paid_amount=data.paid_amount,
-      payment_mode=data.payment_mode,payment_date=payment_date,reference=data.reference,note=data.note)
-    db.add(payment); db.commit(); db.refresh(payment)
-    return {"message":"Dealer payment added successfully","payment_id":payment.id}
+        try:
+            payment_date = datetime.strptime(data.payment_date, "%Y-%m-%d")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid payment date") from exc
+    payment = models.DealerPayment(
+        dealer_id=data.dealer_id,
+        paid_amount=data.paid_amount,
+        payment_mode=data.payment_mode,
+        payment_date=payment_date,
+        reference=data.reference,
+        note=data.note,
+    )
+    db.add(payment)
+    db.commit()
+    db.refresh(payment)
+    return {"message": "Dealer payment added successfully", "payment_id": payment.id}
 
 
 @app.get("/reports/stock")
@@ -389,34 +542,63 @@ def stock_report(db: Session = Depends(get_db)):
 
 
 @app.get("/reports/sales")
-def sales_report(from_date: str | None = None, to_date: str | None = None, payment_mode: str | None = None, db: Session = Depends(get_db)):
+def sales_report(
+    from_date: str | None = None,
+    to_date: str | None = None,
+    payment_mode: str | None = None,
+    db: Session = Depends(get_db),
+):
     query = db.query(models.Sale)
     try:
         if from_date:
-            query = query.filter(models.Sale.bill_date >= datetime.strptime(from_date, "%Y-%m-%d"))
+            query = query.filter(
+                models.Sale.bill_date >= datetime.strptime(from_date, "%Y-%m-%d")
+            )
         if to_date:
-            query = query.filter(models.Sale.bill_date <= datetime.strptime(to_date + " 23:59:59", "%Y-%m-%d %H:%M:%S"))
+            query = query.filter(
+                models.Sale.bill_date
+                <= datetime.strptime(to_date + " 23:59:59", "%Y-%m-%d %H:%M:%S")
+            )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid report date") from exc
     if payment_mode and payment_mode != "All":
         query = query.filter(models.Sale.payment_mode == payment_mode)
     sales = query.order_by(models.Sale.bill_date.desc(), models.Sale.id.desc()).all()
+
     def total_for(mode=None):
-        return sum(to_float(s.final_amount) for s in sales if mode is None or s.payment_mode == mode)
-    rows = [{
-        "id": s.id, "invoice_no": s.invoice_no, "customer_name": s.customer_name,
-        "customer_mobile": s.customer_mobile, "payment_mode": s.payment_mode,
-        "subtotal": s.subtotal, "gst_amount": s.gst_amount, "final_amount": s.final_amount,
-        "bill_date": (s.bill_date or s.created_at).strftime("%Y-%m-%d") if (s.bill_date or s.created_at) else None
-    } for s in sales]
+        return sum(
+            to_float(s.final_amount)
+            for s in sales
+            if mode is None or s.payment_mode == mode
+        )
+
+    rows = [
+        {
+            "id": s.id,
+            "invoice_no": s.invoice_no,
+            "customer_name": s.customer_name,
+            "customer_mobile": s.customer_mobile,
+            "payment_mode": s.payment_mode,
+            "subtotal": s.subtotal,
+            "gst_amount": s.gst_amount,
+            "final_amount": s.final_amount,
+            "bill_date": (s.bill_date or s.created_at).strftime("%Y-%m-%d")
+            if (s.bill_date or s.created_at)
+            else None,
+        }
+        for s in sales
+    ]
     return {
-        "total_sales": total_for(), "cash_sales": total_for("Cash"),
-        "online_sales": total_for("Online"), "credit_sales": total_for("Credit"),
+        "total_sales": total_for(),
+        "cash_sales": total_for("Cash"),
+        "online_sales": total_for("Online"),
+        "credit_sales": total_for("Credit"),
         "total_gst": sum(to_float(s.gst_amount) for s in sales),
-        "total_bills": len(sales), "sales": rows
+        "total_bills": len(sales),
+        "sales": rows,
     }
 
-    
+
 @app.get("/dashboard")
 def get_dashboard(
     from_date: str | None = None,
@@ -429,25 +611,42 @@ def get_dashboard(
         try:
             start_date = datetime.strptime(from_date, "%Y-%m-%d")
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid from_date format") from exc
+            raise HTTPException(
+                status_code=400, detail="Invalid from_date format"
+            ) from exc
         query = query.filter(models.Sale.created_at >= start_date)
 
     if to_date:
         try:
             end_date = datetime.strptime(to_date + " 23:59:59", "%Y-%m-%d %H:%M:%S")
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid to_date format") from exc
+            raise HTTPException(
+                status_code=400, detail="Invalid to_date format"
+            ) from exc
         query = query.filter(models.Sale.created_at <= end_date)
 
     sales = query.order_by(models.Sale.created_at.asc()).all()
 
     total_sales = sum(to_float(s.final_amount) for s in sales)
-    cash_sales = sum(to_float(s.final_amount) for s in sales if getattr(s, "payment_mode", None) == "Cash")
-    online_sales = sum(to_float(s.final_amount) for s in sales if getattr(s, "payment_mode", None) == "Online")
-    credit_sales = sum(to_float(s.final_amount) for s in sales if getattr(s, "payment_mode", None) == "Credit")
+    cash_sales = sum(
+        to_float(s.final_amount)
+        for s in sales
+        if getattr(s, "payment_mode", None) == "Cash"
+    )
+    online_sales = sum(
+        to_float(s.final_amount)
+        for s in sales
+        if getattr(s, "payment_mode", None) == "Online"
+    )
+    credit_sales = sum(
+        to_float(s.final_amount)
+        for s in sales
+        if getattr(s, "payment_mode", None) == "Credit"
+    )
     customer_payments = db.query(models.CustomerPayment).all()
     customer_credit_outstanding = max(
-        credit_sales - sum(to_float(payment.paid_amount) for payment in customer_payments),
+        credit_sales
+        - sum(to_float(payment.paid_amount) for payment in customer_payments),
         0,
     )
 
@@ -482,7 +681,9 @@ def get_dashboard(
         "total_bills": len(sales),
         "total_customers": db.query(models.Customer).count(),
         "total_items": db.query(models.Item).count(),
-        "low_stock_count": db.query(models.Item).filter(models.Item.stock <= 10).count(),
+        "low_stock_count": db.query(models.Item)
+        .filter(models.Item.stock <= 10)
+        .count(),
         "sales_trend": [
             {"date": date, "amount": round(amount, 2)}
             for date, amount in trend_map.items()
@@ -515,34 +716,71 @@ def bulk_update_items(data: schemas.BulkItemUpdate, db: Session = Depends(get_db
     changed = 0
     for row in data.items:
         item = db.query(models.Item).filter(models.Item.id == row.id).first()
-        if not item: raise HTTPException(status_code=404, detail=f"Item {row.id} not found")
+        if not item:
+            raise HTTPException(status_code=404, detail=f"Item {row.id} not found")
         barcode = row.barcode if row.barcode is not None else item.barcode
-        duplicate = db.query(models.Item).filter(models.Item.barcode == barcode, models.Item.id != item.id).first()
-        if duplicate: raise HTTPException(status_code=400, detail=f"Duplicate barcode: {barcode}")
-        purchase = item.purchase_price if row.purchase_price is None else row.purchase_price
+        duplicate = (
+            db.query(models.Item)
+            .filter(models.Item.barcode == barcode, models.Item.id != item.id)
+            .first()
+        )
+        if duplicate:
+            raise HTTPException(status_code=400, detail=f"Duplicate barcode: {barcode}")
+        purchase = (
+            item.purchase_price if row.purchase_price is None else row.purchase_price
+        )
         mrp = item.mrp if row.mrp is None else row.mrp
         sale = item.sale_price if row.sale_price is None else row.sale_price
         gst = item.gst_percent if row.gst_percent is None else row.gst_percent
-        if min(purchase, mrp, sale, gst) < 0: raise HTTPException(status_code=400, detail=f"Negative value not allowed for {item.item_name}")
-        if sale > mrp: raise HTTPException(status_code=400, detail=f"Sales price cannot exceed MRP for {item.item_name}")
-        previous = int(item.stock or 0); adjustment = int(row.stock_adjustment or 0); new_stock = previous + adjustment
-        if new_stock < 0: raise HTTPException(status_code=400, detail=f"Stock cannot be negative for {item.item_name}")
+        if min(purchase, mrp, sale, gst) < 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Negative value not allowed for {item.item_name}",
+            )
+        if sale > mrp:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Sales price cannot exceed MRP for {item.item_name}",
+            )
+        previous = int(item.stock or 0)
+        adjustment = int(row.stock_adjustment or 0)
+        new_stock = previous + adjustment
+        if new_stock < 0:
+            raise HTTPException(
+                status_code=400, detail=f"Stock cannot be negative for {item.item_name}"
+            )
         item.item_name = row.item_name if row.item_name is not None else item.item_name
-        item.barcode = barcode; item.purchase_price=purchase; item.mrp=mrp; item.sale_price=sale; item.gst_percent=gst
+        item.barcode = barcode
+        item.purchase_price = purchase
+        item.mrp = mrp
+        item.sale_price = sale
+        item.gst_percent = gst
         if adjustment:
-            item.stock=new_stock
-            db.add(models.StockAdjustment(item_id=item.id,previous_stock=previous,adjustment=adjustment,
-              new_stock=new_stock,reason=row.adjustment_reason or "Bulk update"))
+            item.stock = new_stock
+            db.add(
+                models.StockAdjustment(
+                    item_id=item.id,
+                    previous_stock=previous,
+                    adjustment=adjustment,
+                    new_stock=new_stock,
+                    reason=row.adjustment_reason or "Bulk update",
+                )
+            )
         changed += 1
     db.commit()
-    return {"message":f"{changed} products updated successfully","updated":changed}
+    return {"message": f"{changed} products updated successfully", "updated": changed}
+
 
 @app.put("/items/{item_id}")
 def update_item(item_id: int, data: schemas.ItemUpdate, db: Session = Depends(get_db)):
     item = db.query(models.Item).filter(models.Item.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
-    duplicate = db.query(models.Item).filter(models.Item.barcode == data.barcode, models.Item.id != item_id).first()
+    duplicate = (
+        db.query(models.Item)
+        .filter(models.Item.barcode == data.barcode, models.Item.id != item_id)
+        .first()
+    )
     if duplicate:
         raise HTTPException(status_code=400, detail="Barcode already exists")
     for key, value in data.dict().items():
@@ -559,7 +797,9 @@ def delete_item(item_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Item not found")
     used = db.query(models.SaleItem).filter(models.SaleItem.item_id == item_id).first()
     if used:
-        raise HTTPException(status_code=400, detail="Item is used in sales and cannot be deleted")
+        raise HTTPException(
+            status_code=400, detail="Item is used in sales and cannot be deleted"
+        )
     db.delete(item)
     db.commit()
     return {"message": "Item deleted successfully"}
@@ -569,86 +809,124 @@ def delete_item(item_id: int, db: Session = Depends(get_db)):
 def import_items(data: schemas.ItemImport, db: Session = Depends(get_db)):
     created, skipped = 0, []
     for row in data.items:
-        existing = db.query(models.Item).filter(models.Item.barcode == row.barcode).first()
+        existing = (
+            db.query(models.Item).filter(models.Item.barcode == row.barcode).first()
+        )
         if existing:
             skipped.append(row.barcode)
             continue
         db.add(models.Item(**row.dict()))
         created += 1
     db.commit()
-    return {"message": f"{created} items imported", "created": created, "skipped": skipped}
+    return {
+        "message": f"{created} items imported",
+        "created": created,
+        "skipped": skipped,
+    }
 
 
 @app.get("/customers/credit-ledger")
 def customer_credit_ledger(db: Session = Depends(get_db)):
-    customers = db.query(models.Customer).order_by(models.Customer.customer_name.asc()).all()
+    customers = (
+        db.query(models.Customer).order_by(models.Customer.customer_name.asc()).all()
+    )
     result = []
 
     for customer in customers:
         sales_query = db.query(models.Sale).filter(models.Sale.payment_mode == "Credit")
         if customer.mobile:
-            sales_query = sales_query.filter(models.Sale.customer_mobile == customer.mobile)
+            sales_query = sales_query.filter(
+                models.Sale.customer_mobile == customer.mobile
+            )
         else:
-            sales_query = sales_query.filter(models.Sale.customer_name == customer.customer_name)
+            sales_query = sales_query.filter(
+                models.Sale.customer_name == customer.customer_name
+            )
 
-        credit_sales = sales_query.order_by(models.Sale.bill_date.desc(), models.Sale.id.desc()).all()
+        credit_sales = sales_query.order_by(
+            models.Sale.bill_date.desc(), models.Sale.id.desc()
+        ).all()
         credit = sum(to_float(s.final_amount) for s in credit_sales)
         paid = sum(to_float(p.paid_amount) for p in customer.payments)
         outstanding = max(credit - paid, 0)
         latest_purchase = credit_sales[0].bill_date if credit_sales else None
 
-        result.append({
-            "id": customer.id,
-            "customer_name": customer.customer_name,
-            "mobile": customer.mobile,
-            "address": customer.address,
-            "purchase_date": latest_purchase.isoformat() if latest_purchase else None,
-            "credit_amount": round(credit, 2),
-            "paid_amount": round(paid, 2),
-            "pending_amount": round(outstanding, 2),
-            "credit_purchases": [{
-                "id": sale.id,
-                "invoice_no": sale.invoice_no,
-                "purchase_date": sale.bill_date.isoformat() if sale.bill_date else None,
-                "credit_amount": round(to_float(sale.final_amount), 2),
-            } for sale in credit_sales],
-            "payments": [{
-                "id": payment.id,
-                "paid_amount": round(to_float(payment.paid_amount), 2),
-                "payment_mode": payment.payment_mode,
-                "payment_date": payment.payment_date.isoformat() if payment.payment_date else None,
-                "reference": getattr(payment, "reference", None),
-                "note": payment.note,
-            } for payment in sorted(
-                customer.payments,
-                key=lambda item: item.payment_date or datetime.min,
-                reverse=True,
-            )],
-        })
+        result.append(
+            {
+                "id": customer.id,
+                "customer_name": customer.customer_name,
+                "mobile": customer.mobile,
+                "address": customer.address,
+                "purchase_date": latest_purchase.isoformat()
+                if latest_purchase
+                else None,
+                "credit_amount": round(credit, 2),
+                "paid_amount": round(paid, 2),
+                "pending_amount": round(outstanding, 2),
+                "credit_purchases": [
+                    {
+                        "id": sale.id,
+                        "invoice_no": sale.invoice_no,
+                        "purchase_date": sale.bill_date.isoformat()
+                        if sale.bill_date
+                        else None,
+                        "credit_amount": round(to_float(sale.final_amount), 2),
+                    }
+                    for sale in credit_sales
+                ],
+                "payments": [
+                    {
+                        "id": payment.id,
+                        "paid_amount": round(to_float(payment.paid_amount), 2),
+                        "payment_mode": payment.payment_mode,
+                        "payment_date": payment.payment_date.isoformat()
+                        if payment.payment_date
+                        else None,
+                        "reference": getattr(payment, "reference", None),
+                        "note": payment.note,
+                    }
+                    for payment in sorted(
+                        customer.payments,
+                        key=lambda item: item.payment_date or datetime.min,
+                        reverse=True,
+                    )
+                ],
+            }
+        )
 
     return result
 
 
 @app.post("/customer-payments")
-def add_customer_payment(data: schemas.CustomerPaymentCreate, db: Session = Depends(get_db)):
-    customer = db.query(models.Customer).filter(models.Customer.id == data.customer_id).first()
+def add_customer_payment(
+    data: schemas.CustomerPaymentCreate, db: Session = Depends(get_db)
+):
+    customer = (
+        db.query(models.Customer).filter(models.Customer.id == data.customer_id).first()
+    )
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
     if data.paid_amount <= 0:
-        raise HTTPException(status_code=400, detail="Payment amount must be greater than zero")
+        raise HTTPException(
+            status_code=400, detail="Payment amount must be greater than zero"
+        )
 
     sales_query = db.query(models.Sale).filter(models.Sale.payment_mode == "Credit")
     if customer.mobile:
         sales_query = sales_query.filter(models.Sale.customer_mobile == customer.mobile)
     else:
-        sales_query = sales_query.filter(models.Sale.customer_name == customer.customer_name)
+        sales_query = sales_query.filter(
+            models.Sale.customer_name == customer.customer_name
+        )
 
     total_credit = sum(to_float(s.final_amount) for s in sales_query.all())
     total_paid = sum(to_float(p.paid_amount) for p in customer.payments)
     outstanding = max(total_credit - total_paid, 0)
 
     if outstanding <= 0:
-        raise HTTPException(status_code=400, detail="This customer has no outstanding credit amount")
+        raise HTTPException(
+            status_code=400, detail="This customer has no outstanding credit amount"
+        )
     if data.paid_amount > outstanding:
         raise HTTPException(
             status_code=400,
@@ -679,7 +957,9 @@ def add_customer_payment(data: schemas.CustomerPaymentCreate, db: Session = Depe
         "payment_id": payment.id,
         "paid_amount": round(to_float(payment.paid_amount), 2),
         "updated_paid_amount": round(total_paid + to_float(payment.paid_amount), 2),
-        "updated_outstanding_amount": round(outstanding - to_float(payment.paid_amount), 2),
+        "updated_outstanding_amount": round(
+            outstanding - to_float(payment.paid_amount), 2
+        ),
     }
 
 
@@ -698,14 +978,19 @@ def dealer_payment_history(dealer_id: int, db: Session = Depends(get_db)):
     dealer = db.query(models.Dealer).filter(models.Dealer.id == dealer_id).first()
     if not dealer:
         raise HTTPException(status_code=404, detail="Dealer not found")
-    return [{
-        "id": p.id,
-        "paid_amount": p.paid_amount,
-        "payment_mode": p.payment_mode,
-        "payment_date": p.payment_date.isoformat() if p.payment_date else None,
-        "reference": getattr(p, "reference", None),
-        "note": getattr(p, "note", None),
-    } for p in sorted(dealer.payments, key=lambda x: x.payment_date or datetime.min, reverse=True)]
+    return [
+        {
+            "id": p.id,
+            "paid_amount": p.paid_amount,
+            "payment_mode": p.payment_mode,
+            "payment_date": p.payment_date.isoformat() if p.payment_date else None,
+            "reference": getattr(p, "reference", None),
+            "note": getattr(p, "note", None),
+        }
+        for p in sorted(
+            dealer.payments, key=lambda x: x.payment_date or datetime.min, reverse=True
+        )
+    ]
 
 
 @app.post("/expenses")
@@ -729,13 +1014,24 @@ def add_expense(data: schemas.ExpenseCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/expenses")
-def get_expenses(from_date: str | None = None, to_date: str | None = None, db: Session = Depends(get_db)):
+def get_expenses(
+    from_date: str | None = None,
+    to_date: str | None = None,
+    db: Session = Depends(get_db),
+):
     query = db.query(models.Expense)
     if from_date:
-        query = query.filter(models.Expense.expense_date >= datetime.strptime(from_date, "%Y-%m-%d"))
+        query = query.filter(
+            models.Expense.expense_date >= datetime.strptime(from_date, "%Y-%m-%d")
+        )
     if to_date:
-        query = query.filter(models.Expense.expense_date <= datetime.strptime(to_date + " 23:59:59", "%Y-%m-%d %H:%M:%S"))
-    rows = query.order_by(models.Expense.expense_date.desc(), models.Expense.id.desc()).all()
+        query = query.filter(
+            models.Expense.expense_date
+            <= datetime.strptime(to_date + " 23:59:59", "%Y-%m-%d %H:%M:%S")
+        )
+    rows = query.order_by(
+        models.Expense.expense_date.desc(), models.Expense.id.desc()
+    ).all()
     return rows
 
 
@@ -824,4 +1120,3 @@ def update_password(
     db.commit()
 
     return {"message": "Password updated successfully"}
-    
