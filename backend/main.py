@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from typing import Any
 
@@ -14,13 +15,17 @@ from security import hash_password, verify_password
 
 Base.metadata.create_all(bind=engine)
 
+
 # Lightweight migration support for existing Sprint 3 databases.
 def ensure_column(table: str, column: str, definition: str):
     inspector = inspect(engine)
     existing = {item["name"] for item in inspector.get_columns(table)}
     if column not in existing:
         with engine.begin() as connection:
-            connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {definition}"))
+            connection.execute(
+                text(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            )
+
 
 ensure_column("sales", "bill_date", "TIMESTAMP")
 ensure_column("dealer_payments", "reference", "VARCHAR")
@@ -36,9 +41,16 @@ ensure_column("dealers", "gst_number", "VARCHAR")
 
 app = FastAPI(title="Resolvent Billing Software API")
 
+# Read allowed frontend URLs from the environment
+cors_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
