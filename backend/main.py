@@ -32,8 +32,22 @@ def run_database_migrations():
         "ALTER TABLE sales ADD COLUMN IF NOT EXISTS total_saving DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS mrp DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS saving DOUBLE PRECISION DEFAULT 0",
+        """
+    CREATE TABLE IF NOT EXISTS dealer_bills (
+        id SERIAL PRIMARY KEY,
+        dealer_id INTEGER NOT NULL,
+        bill_number VARCHAR,
+        bill_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+        bill_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        note VARCHAR,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT fk_dealer_bills_dealer
+            FOREIGN KEY (dealer_id)
+            REFERENCES dealers(id)
+            ON DELETE CASCADE
+    )
+    """,
     ]
-
     with engine.begin() as connection:
         for statement in migration_statements:
             connection.execute(text(statement))
