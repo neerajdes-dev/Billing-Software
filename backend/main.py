@@ -1,12 +1,12 @@
 import os
-from datetime import datetime
+from datetime import datetime, date
 from typing import Any
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from datetime import datetime, date
+
 
 from database import Base, engine, SessionLocal
 import models
@@ -397,19 +397,29 @@ def add_dealer_bill(
                 detail="Bill amount must be greater than zero",
             )
 
-from datetime import datetime, date
+        bill_date = datetime.now()
 
-bill_date = datetime.now()
+        if data.bill_date:
+            if isinstance(data.bill_date, datetime):
+                bill_date = data.bill_date
 
-if data.bill_date:
-    if isinstance(data.bill_date, datetime):
-        bill_date = data.bill_date
+            elif isinstance(data.bill_date, date):
+                bill_date = datetime.combine(
+                    data.bill_date,
+                    datetime.min.time(),
+                )
 
-    elif isinstance(data.bill_date, date):
-        bill_date = datetime.combine(data.bill_date, datetime.min.time())
-
-    elif isinstance(data.bill_date, str):
-        bill_date = datetime.strptime(data.bill_date, "%Y-%m-%d")
+            elif isinstance(data.bill_date, str):
+                try:
+                    bill_date = datetime.strptime(
+                        data.bill_date,
+                        "%Y-%m-%d",
+                    )
+                except ValueError as exc:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid bill date. Use YYYY-MM-DD.",
+                    ) from exc
 
         bill = models.DealerBill(
             dealer_id=data.dealer_id,
@@ -538,60 +548,96 @@ def delete_dealer_bill(bill_id: int, db: Session = Depends(get_db)):
 
 @app.post("/dealer-payments")
 def add_dealer_payment(
-    data: schemas.DealerPaymentCreate, db: Session = Depends(get_db)
+    data: schemas.DealerPaymentCreate,
+    db: Session = Depends(get_db),
 ):
-    dealer = db.query(models.Dealer).filter(models.Dealer.id == data.dealer_id).first()
-    if not dealer:
-        raise HTTPException(status_code=404, detail="Dealer not found")
-    total_bills = sum(to_float(b.bill_amount) for b in dealer.bills) or to_float(
-        dealer.bill_amount
-    )
-    paid = sum(to_float(p.paid_amount) for p in dealer.payments)
-    outstanding = max(total_bills - paid, 0)
-    if data.paid_amount <= 0:
-        raise HTTPException(
-            status_code=400, detail="Payment amount must be greater than zero"
-        )
-    if data.paid_amount > outstanding:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Payment cannot exceed outstanding amount of {outstanding:.2f}",
-        )
-    payment_date = datetime.now()
-
-if data.payment_date:
-    if isinstance(data.payment_date, datetime):
-        payment_date = data.payment_date
-
-    elif isinstance(data.payment_date, date):
-        payment_date = datetime.combine(
-            data.payment_date,
-            datetime.min.time()
+    try:
+        dealer = (
+            db.query(models.Dealer).filter(models.Dealer.id == data.dealer_id).first()
         )
 
-    elif isinstance(data.payment_date, str):
-        try:
-            payment_date = datetime.strptime(
-                data.payment_date,
-                "%Y-%m-%d"
+        if not dealer:
+            raise HTTPException(
+                status_code=404,
+                detail="Dealer not found",
             )
-        except ValueError as exc:
+
+        total_bills = sum(
+            to_float(bill.bill_amount) for bill in dealer.bills
+        ) or to_float(dealer.bill_amount)
+
+        total_paid = sum(to_float(payment.paid_amount) for payment in dealer.payments)
+
+        outstanding = max(total_bills - total_paid, 0)
+
+        if data.paid_amount <= 0:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid payment date"
-            ) from exc
-    payment = models.DealerPayment(
-        dealer_id=data.dealer_id,
-        paid_amount=data.paid_amount,
-        payment_mode=data.payment_mode,
-        payment_date=payment_date,
-        reference=data.reference,
-        note=data.note,
-    )
-    db.add(payment)
-    db.commit()
-    db.refresh(payment)
-    return {"message": "Dealer payment added successfully", "payment_id": payment.id}
+                detail="Payment amount must be greater than zero",
+            )
+
+        if data.paid_amount > outstanding:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Payment cannot exceed outstanding amount of {outstanding:.2f}"
+                ),
+            )
+
+        payment_date = datetime.now()
+
+        if data.payment_date:
+            if isinstance(data.payment_date, datetime):
+                payment_date = data.payment_date
+
+            elif isinstance(data.payment_date, date):
+                payment_date = datetime.combine(
+                    data.payment_date,
+                    datetime.min.time(),
+                )
+
+            elif isinstance(data.payment_date, str):
+                try:
+                    payment_date = datetime.strptime(
+                        data.payment_date,
+                        "%Y-%m-%d",
+                    )
+                except ValueError as exc:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid payment date. Use YYYY-MM-DD.",
+                    ) from exc
+
+        payment = models.DealerPayment(
+            dealer_id=data.dealer_id,
+            paid_amount=data.paid_amount,
+            payment_mode=data.payment_mode,
+            payment_date=payment_date,
+            reference=data.reference,
+            note=data.note,
+        )
+
+        db.add(payment)
+        db.commit()
+        db.refresh(payment)
+
+        return {
+            "message": "Dealer payment added successfully",
+            "payment_id": payment.id,
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception as error:
+        db.rollback()
+        print("DEALER PAYMENT ERROR:", repr(error))
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Dealer payment database error: {str(error)}",
+        ) from error
 
 
 @app.get("/reports/stock")
@@ -1007,27 +1053,27 @@ def add_customer_payment(
 
     payment_date = datetime.now()
 
-if data.payment_date:
-    if isinstance(data.payment_date, datetime):
-        payment_date = data.payment_date
+    if data.payment_date:
+        if isinstance(data.payment_date, datetime):
+            payment_date = data.payment_date
 
-    elif isinstance(data.payment_date, date):
-        payment_date = datetime.combine(
-            data.payment_date,
-            datetime.min.time()
-        )
-
-    elif isinstance(data.payment_date, str):
-        try:
-            payment_date = datetime.strptime(
+        elif isinstance(data.payment_date, date):
+            payment_date = datetime.combine(
                 data.payment_date,
-                "%Y-%m-%d"
+                datetime.min.time()
             )
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid payment date"
-            ) from exc
+
+        elif isinstance(data.payment_date, str):
+            try:
+                payment_date = datetime.strptime(
+                    data.payment_date,
+                    "%Y-%m-%d"
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid payment date"
+                ) from exc
 
     payment = models.CustomerPayment(
         customer_id=data.customer_id,
@@ -1046,9 +1092,7 @@ if data.payment_date:
         "payment_id": payment.id,
         "paid_amount": round(to_float(payment.paid_amount), 2),
         "updated_paid_amount": round(total_paid + to_float(payment.paid_amount), 2),
-        "updated_outstanding_amount": round(
-            outstanding - to_float(payment.paid_amount), 2
-        ),
+        "updated_outstanding_amount": round(outstanding - to_float(payment.paid_amount), 2),
     }
 
 
