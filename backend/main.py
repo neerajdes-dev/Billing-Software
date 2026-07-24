@@ -6,6 +6,7 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from datetime import datetime, date
 
 from database import Base, engine, SessionLocal
 import models
@@ -396,19 +397,19 @@ def add_dealer_bill(
                 detail="Bill amount must be greater than zero",
             )
 
-        bill_date = datetime.now()
+from datetime import datetime, date
 
-        if data.bill_date:
-            try:
-                bill_date = datetime.strptime(
-                    data.bill_date,
-                    "%Y-%m-%d",
-                )
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Invalid bill date. Use YYYY-MM-DD.",
-                ) from exc
+bill_date = datetime.now()
+
+if data.bill_date:
+    if isinstance(data.bill_date, datetime):
+        bill_date = data.bill_date
+
+    elif isinstance(data.bill_date, date):
+        bill_date = datetime.combine(data.bill_date, datetime.min.time())
+
+    elif isinstance(data.bill_date, str):
+        bill_date = datetime.strptime(data.bill_date, "%Y-%m-%d")
 
         bill = models.DealerBill(
             dealer_id=data.dealer_id,
@@ -557,11 +558,28 @@ def add_dealer_payment(
             detail=f"Payment cannot exceed outstanding amount of {outstanding:.2f}",
         )
     payment_date = datetime.now()
-    if data.payment_date:
+
+if data.payment_date:
+    if isinstance(data.payment_date, datetime):
+        payment_date = data.payment_date
+
+    elif isinstance(data.payment_date, date):
+        payment_date = datetime.combine(
+            data.payment_date,
+            datetime.min.time()
+        )
+
+    elif isinstance(data.payment_date, str):
         try:
-            payment_date = datetime.strptime(data.payment_date, "%Y-%m-%d")
+            payment_date = datetime.strptime(
+                data.payment_date,
+                "%Y-%m-%d"
+            )
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid payment date") from exc
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid payment date"
+            ) from exc
     payment = models.DealerPayment(
         dealer_id=data.dealer_id,
         paid_amount=data.paid_amount,
@@ -988,11 +1006,28 @@ def add_customer_payment(
         )
 
     payment_date = datetime.now()
-    if data.payment_date:
+
+if data.payment_date:
+    if isinstance(data.payment_date, datetime):
+        payment_date = data.payment_date
+
+    elif isinstance(data.payment_date, date):
+        payment_date = datetime.combine(
+            data.payment_date,
+            datetime.min.time()
+        )
+
+    elif isinstance(data.payment_date, str):
         try:
-            payment_date = datetime.strptime(data.payment_date, "%Y-%m-%d")
+            payment_date = datetime.strptime(
+                data.payment_date,
+                "%Y-%m-%d"
+            )
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid payment date") from exc
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid payment date"
+            ) from exc
 
     payment = models.CustomerPayment(
         customer_id=data.customer_id,
