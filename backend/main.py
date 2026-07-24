@@ -18,13 +18,24 @@ Base.metadata.create_all(bind=engine)
 
 # Lightweight migration support for existing Sprint 3 databases.
 def ensure_column(table: str, column: str, definition: str):
-    inspector = inspect(engine)
-    existing = {item["name"] for item in inspector.get_columns(table)}
-    if column not in existing:
-        with engine.begin() as connection:
-            connection.execute(
-                text(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-            )
+    try:
+        inspector = inspect(engine)
+        existing_columns = {item["name"] for item in inspector.get_columns(table)}
+
+        if column not in existing_columns:
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        f'ALTER TABLE "{table}" '
+                        f'ADD COLUMN IF NOT EXISTS "{column}" {definition}'
+                    )
+                )
+
+            print(f"Added column: {table}.{column}")
+
+    except Exception as error:
+        print(f"Migration failed for {table}.{column}: {error}")
+        raise
 
 
 ensure_column("sales", "bill_date", "TIMESTAMP")
