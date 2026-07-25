@@ -16,9 +16,12 @@ import TableViewRoundedIcon from "@mui/icons-material/TableViewRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
+import EditNoteRoundedIcon from "@mui/icons-material/EditNoteRounded";
+import SaveRoundedIcon from "@mui/icons-material/SaveRounded";
+import FileDownloadRoundedIcon from "@mui/icons-material/FileDownloadRounded";
 import AppLayout from "../components/AppLayout";
 import PageHeader from "../components/PageHeader";
-import { addItem, deleteItem, getItems, importItems, updateItem } from "../services/api";
+import { addItem, bulkUpdateItems, deleteItem, getItems, importItems, updateItem } from "../services/api";
 
 const money = (value) => new Intl.NumberFormat("en-IN", {
   style: "currency", currency: "INR", maximumFractionDigits: 2,
@@ -179,6 +182,10 @@ export default function Items() {
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
+  const [bulkRows, setBulkRows] = useState([]);
+  const [modifiedRowIds, setModifiedRowIds] = useState(new Set());
+  const [bulkSaving, setBulkSaving] = useState(false);
   const [importMenuAnchor, setImportMenuAnchor] = useState(null);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -397,6 +404,257 @@ export default function Items() {
     }
   };
 
+
+  const openBulkUpdate = () => {
+    setBulkRows(
+      items.map((item) => ({
+        id: item.id,
+        item_name: item.item_name ?? "",
+        barcode: item.barcode ?? "",
+        purchase_price: Number(item.purchase_price || 0),
+        mrp: Number(item.mrp || 0),
+        sale_price: Number(item.sale_price || 0),
+        gst_percent: Number(item.gst_percent || 0),
+        current_stock: Number(item.stock || 0),
+        stock_adjustment: 0,
+        adjustment_reason: "",
+      }))
+    );
+    setModifiedRowIds(new Set());
+    setBulkDialogOpen(true);
+  };
+
+  const processBulkRowUpdate = (newRow, oldRow) => {
+    const numericFields = [
+      "purchase_price",
+      "mrp",
+      "sale_price",
+      "gst_percent",
+      "stock_adjustment",
+    ];
+
+    const normalizedRow = {
+      ...newRow,
+      item_name: String(newRow.item_name || "").trimStart(),
+      barcode: String(newRow.barcode || "").trim(),
+    };
+
+    numericFields.forEach((field) => {
+      normalizedRow[field] = numberValue(newRow[field]);
+    });
+
+    const changed = Object.keys(normalizedRow).some(
+      (key) => normalizedRow[key] !== oldRow[key]
+    );
+
+    if (changed) {
+      setModifiedRowIds((current) => {
+        const next = new Set(current);
+        next.add(newRow.id);
+        return next;
+      });
+    }
+
+    setBulkRows((current) =>
+      current.map((row) => (row.id === newRow.id ? normalizedRow : row))
+    );
+
+    return normalizedRow;
+  };
+
+  const validateBulkRows = (rows) => {
+    const barcodes = new Set();
+
+    for (const row of rows) {
+      if (!String(row.item_name || "").trim()) {
+        return `Item name is required for row ${row.id}.`;
+      }
+
+      if (!String(row.barcode || "").trim()) {
+        return `Barcode is required for ${row.item_name || `row ${row.id}`}.`;
+      }
+
+      const barcode = String(row.barcode).trim().toLowerCase();
+
+      if (barcodes.has(barcode)) {
+        return `Duplicate barcode found in bulk grid: ${row.barcode}.`;
+      }
+
+      barcodes.add(barcode);
+
+      const purchase = numberValue(row.purchase_price);
+      const mrp = numberValue(row.mrp);
+      const sale = numberValue(row.sale_price);
+      const gst = numberValue(row.gst_percent);
+      const adjustment = numberValue(row.stock_adjustment);
+      const resultingStock = Number(row.current_stock || 0) + adjustment;
+
+      if ([purchase, mrp, sale, gst].some((value) => value < 0)) {
+        return `Negative pricing or GST is not allowed for ${row.item_name}.`;
+      }
+
+      if (purchase > sale) {
+        return `Purchase price cannot exceed sale price for ${row.item_name}.`;
+      }
+
+      if (sale > mrp) {
+        return `Sale price cannot exceed MRP for ${row.item_name}.`;
+      }
+
+      if (!Number.isInteger(adjustment)) {
+        return `Stock adjustment must be a whole number for ${row.item_name}.`;
+      }
+
+      if (resultingStock < 0) {
+        return `Stock cannot become negative for ${row.item_name}.`;
+      }
+
+      if (adjustment !== 0 && !String(row.adjustment_reason || "").trim()) {
+        return `Adjustment reason is required for ${row.item_name}.`;
+      }
+    }
+
+    return "";
+  };
+
+  const saveBulkChanges = async () => {
+    const rowsToSave = bulkRows.filter((row) => modifiedRowIds.has(row.id));
+
+    if (!rowsToSave.length) {
+      setMessage({ type: "info", text: "No bulk changes to save." });
+      return;
+    }
+
+    const validationError = validateBulkRows(bulkRows);
+
+    if (validationError) {
+      setMessage({ type: "warning", text: validationError });
+      return;
+    }
+
+    try {
+      setBulkSaving(true);
+
+      const payloadRows = rowsToSave.map((row) => ({
+        id: row.id,
+        item_name: String(row.item_name).trim(),
+        barcode: String(row.barcode).trim(),
+        purchase_price: numberValue(row.purchase_price),
+        mrp: numberValue(row.mrp),
+        sale_price: numberValue(row.sale_price),
+        gst_percent: numberValue(row.gst_percent),
+        stock_adjustment: numberValue(row.stock_adjustment),
+        adjustment_reason: String(row.adjustment_reason || "").trim(),
+      }));
+
+      const result = await bulkUpdateItems(payloadRows);
+      await load(true);
+
+      setBulkDialogOpen(false);
+      setModifiedRowIds(new Set());
+      setMessage({
+        type: "success",
+        text: result.message || `${payloadRows.length} products updated successfully.`,
+      });
+    } catch (error) {
+      setMessage({ type: "error", text: error.message });
+    } finally {
+      setBulkSaving(false);
+    }
+  };
+
+  const exportInventory = () => {
+    const exportRows = filtered.map((item) => ({
+      item_name: item.item_name,
+      barcode: item.barcode,
+      purchase_price: Number(item.purchase_price || 0),
+      mrp: Number(item.mrp || 0),
+      sale_price: Number(item.sale_price || 0),
+      gst_percent: Number(item.gst_percent || 0),
+      stock: Number(item.stock || 0),
+      stock_status: stockStatus(item.stock).label,
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(exportRows);
+    worksheet["!cols"] = [
+      { wch: 26 },
+      { wch: 18 },
+      { wch: 18 },
+      { wch: 12 },
+      { wch: 16 },
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 16 },
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Inventory");
+    XLSX.writeFile(workbook, "Inventory_Export.xlsx");
+  };
+
+  const bulkColumns = [
+    { field: "item_name", headerName: "Item Name", minWidth: 220, flex: 1.2, editable: true },
+    { field: "barcode", headerName: "Barcode", minWidth: 150, editable: true },
+    {
+      field: "purchase_price",
+      headerName: "Purchase",
+      type: "number",
+      minWidth: 120,
+      editable: true,
+    },
+    {
+      field: "mrp",
+      headerName: "MRP",
+      type: "number",
+      minWidth: 110,
+      editable: true,
+    },
+    {
+      field: "sale_price",
+      headerName: "Sale",
+      type: "number",
+      minWidth: 110,
+      editable: true,
+    },
+    {
+      field: "gst_percent",
+      headerName: "GST %",
+      type: "number",
+      minWidth: 90,
+      editable: true,
+    },
+    {
+      field: "current_stock",
+      headerName: "Current Stock",
+      type: "number",
+      minWidth: 120,
+      editable: false,
+    },
+    {
+      field: "stock_adjustment",
+      headerName: "Adjustment",
+      type: "number",
+      minWidth: 120,
+      editable: true,
+      description: "Use positive values to add stock and negative values to reduce stock.",
+    },
+    {
+      field: "new_stock",
+      headerName: "New Stock",
+      type: "number",
+      minWidth: 110,
+      valueGetter: (_value, row) =>
+        Number(row.current_stock || 0) + Number(row.stock_adjustment || 0),
+    },
+    {
+      field: "adjustment_reason",
+      headerName: "Reason",
+      minWidth: 220,
+      flex: 1,
+      editable: true,
+    },
+  ];
+
   const columns = [
     { field: "item_name", headerName: "Product", minWidth: 220, flex: 1.2,
       renderCell: ({ row }) => <Box sx={{ py: 1 }}><Typography fontWeight={700}>{row.item_name}</Typography><Typography variant="caption" color="text.secondary">Purchase {money(row.purchase_price)}</Typography></Box> },
@@ -423,6 +681,15 @@ export default function Items() {
 
     <Stack direction={{ xs: "column", md: "row" }} spacing={1.25} justifyContent="flex-end" sx={{ mb: 2.5 }}>
       <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={openAdd}>Add Item</Button>
+
+      <Button
+        variant="outlined"
+        startIcon={<EditNoteRoundedIcon />}
+        onClick={openBulkUpdate}
+        disabled={!items.length}
+      >
+        Bulk Update
+      </Button>
 
       <Button
         id="inventory-import-button"
@@ -460,6 +727,7 @@ export default function Items() {
         </MenuItem>
       </Menu>
 
+      <Button variant="outlined" startIcon={<FileDownloadRoundedIcon />} onClick={exportInventory} disabled={!filtered.length}>Export Excel</Button>
       <Button variant="outlined" startIcon={<RefreshRoundedIcon />} onClick={() => load()} disabled={loading}>Refresh</Button>
       <input hidden ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={importFile} />
     </Stack>
@@ -469,6 +737,89 @@ export default function Items() {
     </Grid>
 
     <Card><CardContent sx={{ p: 0 }}><Box sx={{ p: 2.5, display: "flex", gap: 1.5, justifyContent: "space-between", flexDirection: { xs: "column", md: "row" }, borderBottom: 1, borderColor: "divider" }}><Box><Typography variant="h6">Inventory catalogue</Typography><Typography variant="body2" color="text.secondary">Search, filter, edit and maintain inventory records.</Typography></Box><Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}><TextField size="small" placeholder="Search item or barcode" value={search} onChange={(e) => setSearch(e.target.value)} sx={{ minWidth: { sm: 280 } }} InputProps={{ startAdornment: <InputAdornment position="start"><SearchRoundedIcon fontSize="small" /></InputAdornment> }} /><FormControl size="small" sx={{ minWidth: 160 }}><InputLabel>Stock Status</InputLabel><Select label="Stock Status" value={filter} onChange={(e) => setFilter(e.target.value)}><MenuItem value="all">All Stock</MenuItem><MenuItem value="in">In Stock</MenuItem><MenuItem value="low">Low Stock</MenuItem><MenuItem value="out">Out of Stock</MenuItem></Select></FormControl></Stack></Box><DataGrid autoHeight rows={filtered} columns={columns} loading={loading} disableRowSelectionOnClick pageSizeOptions={[10, 25, 50, 100]} initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }} getRowHeight={() => "auto"} sx={{ border: 0, "& .MuiDataGrid-columnHeaders": { bgcolor: "background.default" }, "& .MuiDataGrid-cell": { py: 1 } }} /></CardContent></Card>
+
+
+    <Dialog
+      open={bulkDialogOpen}
+      onClose={() => !bulkSaving && setBulkDialogOpen(false)}
+      fullWidth
+      maxWidth="xl"
+    >
+      <DialogTitle>
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          justifyContent="space-between"
+          alignItems={{ xs: "flex-start", sm: "center" }}
+          spacing={1}
+        >
+          <Box>
+            <Typography variant="h6" fontWeight={800}>
+              Bulk Inventory Update
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Edit product details directly. Use stock adjustment for additions,
+              damages, corrections or returns.
+            </Typography>
+          </Box>
+
+          <Chip
+            color={modifiedRowIds.size ? "primary" : "default"}
+            label={`${modifiedRowIds.size} modified row${modifiedRowIds.size === 1 ? "" : "s"}`}
+          />
+        </Stack>
+      </DialogTitle>
+
+      <DialogContent dividers sx={{ p: 0 }}>
+        <Alert severity="info" sx={{ borderRadius: 0 }}>
+          Double-click a cell to edit it. Positive stock adjustments add stock;
+          negative adjustments reduce stock. A reason is required whenever stock changes.
+        </Alert>
+
+        <Box sx={{ height: 560, width: "100%" }}>
+          <DataGrid
+            rows={bulkRows}
+            columns={bulkColumns}
+            processRowUpdate={processBulkRowUpdate}
+            onProcessRowUpdateError={(error) =>
+              setMessage({ type: "error", text: error.message })
+            }
+            disableRowSelectionOnClick
+            pageSizeOptions={[25, 50, 100]}
+            initialState={{
+              pagination: {
+                paginationModel: { pageSize: 25, page: 0 },
+              },
+            }}
+            sx={{
+              border: 0,
+              "& .MuiDataGrid-columnHeaders": {
+                bgcolor: "background.default",
+              },
+              "& .MuiDataGrid-cell--editing": {
+                bgcolor: "action.hover",
+              },
+            }}
+          />
+        </Box>
+      </DialogContent>
+
+      <DialogActions sx={{ px: 3, py: 2 }}>
+        <Button
+          onClick={() => setBulkDialogOpen(false)}
+          disabled={bulkSaving}
+        >
+          Cancel
+        </Button>
+        <Button
+          variant="contained"
+          startIcon={<SaveRoundedIcon />}
+          onClick={saveBulkChanges}
+          disabled={bulkSaving || !modifiedRowIds.size}
+        >
+          {bulkSaving ? "Saving..." : "Save All Changes"}
+        </Button>
+      </DialogActions>
+    </Dialog>
 
     <Dialog open={dialogOpen} onClose={() => !saving && setDialogOpen(false)} fullWidth maxWidth="md"><DialogTitle>{editing ? "Edit Inventory Item" : "Add Inventory Item"}</DialogTitle><DialogContent dividers><Grid container spacing={2} sx={{ pt: 0.5 }}>
       <Grid size={{ xs: 12, md: 8 }}><TextField fullWidth required label="Item Name" value={form.item_name} onChange={(e) => setForm({ ...form, item_name: e.target.value })} autoFocus /></Grid>
