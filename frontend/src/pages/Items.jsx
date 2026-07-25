@@ -3,13 +3,16 @@ import * as XLSX from "xlsx";
 import {
   Alert, Box, Button, Card, CardContent, Chip, Dialog, DialogActions,
   DialogContent, DialogTitle, FormControl, Grid, InputAdornment, InputLabel,
-  MenuItem, Select, Stack, TextField, Typography,
+  Menu, MenuItem, Select, Stack, TextField, Typography,
 } from "@mui/material";
 import { DataGrid } from "@mui/x-data-grid";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import Inventory2RoundedIcon from "@mui/icons-material/Inventory2Rounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import UploadFileRoundedIcon from "@mui/icons-material/UploadFileRounded";
+import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
+import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
+import TableViewRoundedIcon from "@mui/icons-material/TableViewRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
@@ -77,6 +80,7 @@ const normalizeImportRow = (row) => {
 
   const purchasePrice = pick(
     "purchase_price",
+    "purchase_prise",
     "purchase_rate",
     "cost_price",
     "cost",
@@ -139,6 +143,26 @@ const normalizeImportRow = (row) => {
   };
 };
 
+const SAMPLE_HEADERS = [
+  "item_name",
+  "barcode",
+  "purchase_price",
+  "mrp",
+  "sale_price",
+  "gst_percent",
+  "stock",
+];
+
+const SAMPLE_ROW = {
+  item_name: "Sample Product",
+  barcode: "8901234567890",
+  purchase_price: 100,
+  mrp: 150,
+  sale_price: 140,
+  gst_percent: 18,
+  stock: 50,
+};
+
 const stockStatus = (stock) => {
   const value = Number(stock || 0);
   if (value <= 0) return { label: "Out of stock", color: "error" };
@@ -155,6 +179,7 @@ export default function Items() {
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [importMenuAnchor, setImportMenuAnchor] = useState(null);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const fileRef = useRef(null);
@@ -264,6 +289,71 @@ export default function Items() {
     }
   };
 
+
+  const closeImportMenu = () => setImportMenuAnchor(null);
+
+  const openFilePicker = () => {
+    closeImportMenu();
+    fileRef.current?.click();
+  };
+
+  const downloadSampleExcel = () => {
+    const itemsSheet = XLSX.utils.json_to_sheet([SAMPLE_ROW], {
+      header: SAMPLE_HEADERS,
+    });
+
+    const instructionSheet = XLSX.utils.aoa_to_sheet([
+      ["Inventory Import Instructions"],
+      [""],
+      ["1", "Do not rename or remove any header column."],
+      ["2", "item_name and barcode are mandatory."],
+      ["3", "Barcode must be unique."],
+      ["4", "purchase_price cannot exceed sale_price."],
+      ["5", "sale_price cannot exceed mrp."],
+      ["6", "gst_percent and stock cannot be negative."],
+      ["7", "Stock must be entered as a whole number."],
+      ["8", "Delete the sample row before entering actual inventory, if required."],
+    ]);
+
+    itemsSheet["!cols"] = [
+      { wch: 24 },
+      { wch: 18 },
+      { wch: 18 },
+      { wch: 12 },
+      { wch: 16 },
+      { wch: 15 },
+      { wch: 12 },
+    ];
+    instructionSheet["!cols"] = [{ wch: 6 }, { wch: 70 }];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, itemsSheet, "Items");
+    XLSX.utils.book_append_sheet(workbook, instructionSheet, "Instructions");
+    XLSX.writeFile(workbook, "Inventory_Import_Template.xlsx");
+
+    closeImportMenu();
+  };
+
+  const downloadSampleCsv = () => {
+    const worksheet = XLSX.utils.json_to_sheet([SAMPLE_ROW], {
+      header: SAMPLE_HEADERS,
+    });
+    const csv = XLSX.utils.sheet_to_csv(worksheet);
+    const blob = new Blob(["\uFEFF" + csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "Inventory_Import_Template.csv";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    closeImportMenu();
+  };
+
   const importFile = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -333,7 +423,43 @@ export default function Items() {
 
     <Stack direction={{ xs: "column", md: "row" }} spacing={1.25} justifyContent="flex-end" sx={{ mb: 2.5 }}>
       <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={openAdd}>Add Item</Button>
-      <Button variant="outlined" startIcon={<UploadFileRoundedIcon />} onClick={() => fileRef.current?.click()} disabled={importing}>{importing ? "Importing..." : "Import Excel / CSV"}</Button>
+
+      <Button
+        id="inventory-import-button"
+        variant="outlined"
+        startIcon={<UploadFileRoundedIcon />}
+        endIcon={<KeyboardArrowDownRoundedIcon />}
+        onClick={(event) => setImportMenuAnchor(event.currentTarget)}
+        disabled={importing}
+        aria-controls={importMenuAnchor ? "inventory-import-menu" : undefined}
+        aria-haspopup="true"
+        aria-expanded={importMenuAnchor ? "true" : undefined}
+      >
+        {importing ? "Importing..." : "Import / Template"}
+      </Button>
+
+      <Menu
+        id="inventory-import-menu"
+        anchorEl={importMenuAnchor}
+        open={Boolean(importMenuAnchor)}
+        onClose={closeImportMenu}
+        MenuListProps={{ "aria-labelledby": "inventory-import-button" }}
+        PaperProps={{ sx: { mt: 1, minWidth: 260, borderRadius: 2 } }}
+      >
+        <MenuItem onClick={openFilePicker}>
+          <UploadFileRoundedIcon fontSize="small" sx={{ mr: 1.5 }} />
+          Import Excel / CSV
+        </MenuItem>
+        <MenuItem onClick={downloadSampleExcel}>
+          <TableViewRoundedIcon fontSize="small" sx={{ mr: 1.5 }} />
+          Download Sample Excel
+        </MenuItem>
+        <MenuItem onClick={downloadSampleCsv}>
+          <DownloadRoundedIcon fontSize="small" sx={{ mr: 1.5 }} />
+          Download Sample CSV
+        </MenuItem>
+      </Menu>
+
       <Button variant="outlined" startIcon={<RefreshRoundedIcon />} onClick={() => load()} disabled={loading}>Refresh</Button>
       <input hidden ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={importFile} />
     </Stack>
