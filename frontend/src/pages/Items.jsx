@@ -31,6 +31,114 @@ const numberValue = (value) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const normalizeHeader = (value) =>
+  String(value ?? "")
+    .replace(/^\uFEFF/, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[%()₹$]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+const normalizeImportRow = (row) => {
+  const normalizedRow = Object.entries(row || {}).reduce((result, [key, value]) => {
+    result[normalizeHeader(key)] = value;
+    return result;
+  }, {});
+
+  const pick = (...keys) => {
+    for (const key of keys) {
+      const value = normalizedRow[normalizeHeader(key)];
+      if (value !== undefined && value !== null && String(value).trim() !== "") {
+        return value;
+      }
+    }
+    return "";
+  };
+
+  const itemName = pick(
+    "item_name",
+    "item",
+    "product",
+    "product_name",
+    "item_description",
+    "description",
+    "name"
+  );
+
+  const barcode = pick(
+    "barcode",
+    "bar_code",
+    "item_code",
+    "product_code",
+    "sku",
+    "code"
+  );
+
+  const purchasePrice = pick(
+    "purchase_price",
+    "purchase_rate",
+    "cost_price",
+    "cost",
+    "buy_price",
+    "buying_price"
+  );
+
+  const salePrice = pick(
+    "sale_price",
+    "sales_price",
+    "selling_price",
+    "selling_rate",
+    "sale_rate",
+    "rate"
+  );
+
+  const mrp = pick(
+    "mrp",
+    "mrp_price",
+    "maximum_retail_price",
+    "retail_price"
+  );
+
+  const gst = pick(
+    "gst_percent",
+    "gst",
+    "gst_percentage",
+    "tax_percent",
+    "tax"
+  );
+
+  const stock = pick(
+    "stock",
+    "opening_stock",
+    "quantity",
+    "qty",
+    "available_stock"
+  );
+
+  const cleanNumber = (value) =>
+    numberValue(
+      String(value ?? "")
+        .replace(/,/g, "")
+        .replace(/[₹$%]/g, "")
+        .trim()
+    );
+
+  const parsedSalePrice = cleanNumber(salePrice);
+
+  return {
+    item_name: String(itemName ?? "").trim(),
+    barcode: String(barcode ?? "")
+      .replace(/\.0$/, "")
+      .trim(),
+    purchase_price: cleanNumber(purchasePrice),
+    mrp: mrp === "" ? parsedSalePrice : cleanNumber(mrp),
+    sale_price: parsedSalePrice,
+    gst_percent: cleanNumber(gst),
+    stock: cleanNumber(stock),
+  };
+};
+
 const stockStatus = (stock) => {
   const value = Number(stock || 0);
   if (value <= 0) return { label: "Out of stock", color: "error" };
@@ -164,17 +272,28 @@ export default function Items() {
       const data = await file.arrayBuffer();
       const workbook = XLSX.read(data);
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
-      const normalized = rows.map((row) => ({
-        item_name: String(row.item_name || row["Item Name"] || "").trim(),
-        barcode: String(row.barcode || row.Barcode || "").trim(),
-        purchase_price: numberValue(row.purchase_price || row["Purchase Price"]),
-        mrp: numberValue(row.mrp || row.MRP || row["MRP Price"] || row.sale_price || row["Sale Price"]),
-        sale_price: numberValue(row.sale_price || row["Sale Price"]),
-        gst_percent: numberValue(row.gst_percent || row["GST %"]),
-        stock: numberValue(row.stock || row.Stock),
-      })).filter((row) => row.item_name && row.barcode);
-      if (!normalized.length) throw new Error("No valid rows found in the file.");
+      const rows = XLSX.utils.sheet_to_json(sheet, {
+        defval: "",
+        raw: false,
+      });
+
+      if (!rows.length) {
+        throw new Error("The selected file is empty or does not contain a data table.");
+      }
+
+      const normalized = rows
+        .map(normalizeImportRow)
+        .filter((row) => row.item_name && row.barcode);
+
+      if (!normalized.length) {
+        const detectedHeaders = Object.keys(rows[0] || {}).join(", ");
+
+        throw new Error(
+          `No valid rows found. Item Name and Barcode are required. ` +
+          `Detected columns: ${detectedHeaders || "none"}. ` +
+          `Supported examples: Item Name, Barcode, Purchase Price, MRP, Sale Price, GST %, Stock.`
+        );
+      }
       const invalid = normalized.find((row) => row.purchase_price < 0 || row.mrp < 0 || row.sale_price < 0 || row.gst_percent < 0 || row.stock < 0 || row.sale_price > row.mrp || row.purchase_price > row.sale_price || !Number.isInteger(row.stock));
       if (invalid) throw new Error(`Invalid pricing or stock for ${invalid.item_name}.`);
       const result = await importItems(normalized);
