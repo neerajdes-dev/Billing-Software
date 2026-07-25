@@ -1,29 +1,234 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
-import { Alert, Box, Button, Card, CardContent, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Grid, IconButton, InputAdornment, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from "@mui/material";
-import AddBoxRoundedIcon from "@mui/icons-material/AddBoxRounded";
+import {
+  Alert, Box, Button, Card, CardContent, Chip, Dialog, DialogActions,
+  DialogContent, DialogTitle, FormControl, Grid, InputAdornment, InputLabel,
+  MenuItem, Select, Stack, TextField, Typography,
+} from "@mui/material";
+import { DataGrid } from "@mui/x-data-grid";
+import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import Inventory2RoundedIcon from "@mui/icons-material/Inventory2Rounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import UploadFileRoundedIcon from "@mui/icons-material/UploadFileRounded";
+import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import AppLayout from "../components/AppLayout";
 import PageHeader from "../components/PageHeader";
 import { addItem, deleteItem, getItems, importItems, updateItem } from "../services/api";
-const money = (v) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(Number(v || 0));
-const emptyForm={item_name:"",barcode:"",purchase_price:"",mrp:"",sale_price:"",gst_percent:"",stock:""};
-export default function Items(){
- const[items,setItems]=useState([]),[search,setSearch]=useState(""),[message,setMessage]=useState({type:"",text:""}),[saving,setSaving]=useState(false),[editing,setEditing]=useState(null);const[form,setForm]=useState(emptyForm);const fileRef=useRef();
- const load=async()=>{try{setItems(await getItems())}catch(e){setMessage({type:"error",text:e.message})}};useEffect(()=>{load()},[]);
- const filtered=useMemo(()=>items.filter(x=>`${x.item_name} ${x.barcode}`.toLowerCase().includes(search.toLowerCase())),[items,search]);
- const payload=()=>({...form,purchase_price:Number(form.purchase_price),mrp:Number(form.mrp),sale_price:Number(form.sale_price),gst_percent:Number(form.gst_percent||0),stock:Number(form.stock||0)});
- const save=async()=>{if(!form.item_name||!form.barcode)return setMessage({type:"warning",text:"Item name and barcode are required."});try{setSaving(true);if(editing)await updateItem(editing.id,payload());else await addItem(payload());setForm(emptyForm);setEditing(null);await load();setMessage({type:"success",text:editing?"Item updated successfully.":"Item added successfully."})}catch(e){setMessage({type:"error",text:e.message})}finally{setSaving(false)}};
- const edit=(x)=>{setEditing(x);setForm({item_name:x.item_name,barcode:x.barcode,purchase_price:x.purchase_price,mrp:x.mrp,sale_price:x.sale_price,gst_percent:x.gst_percent,stock:x.stock})};
- const remove=async(x)=>{if(!confirm(`Delete ${x.item_name}?`))return;try{await deleteItem(x.id);await load();setMessage({type:"success",text:"Item deleted successfully."})}catch(e){setMessage({type:"error",text:e.message})}};
- const onImport=async(e)=>{const file=e.target.files?.[0];if(!file)return;try{const data=await file.arrayBuffer();const wb=XLSX.read(data);const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:""});const normalized=rows.map(r=>({item_name:String(r.item_name||r["Item Name"]||"").trim(),barcode:String(r.barcode||r.Barcode||"").trim(),purchase_price:Number(r.purchase_price||r["Purchase Price"]||0),mrp:Number(r.mrp||r.MRP||r["MRP Price"]||r.sale_price||r["Sale Price"]||0),sale_price:Number(r.sale_price||r["Sale Price"]||0),gst_percent:Number(r.gst_percent||r["GST %"]||0),stock:Number(r.stock||r.Stock||0)})).filter(r=>r.item_name&&r.barcode);if(!normalized.length)throw new Error("No valid rows found. Use columns: item_name, barcode, purchase_price, mrp, sale_price, gst_percent, stock.");const result=await importItems(normalized);await load();setMessage({type:"success",text:`${result.created} items imported. ${result.skipped?.length||0} duplicate barcodes skipped.`})}catch(err){setMessage({type:"error",text:err.message})}finally{e.target.value=""}};
- const low=items.filter(x=>Number(x.stock)<=5&&Number(x.stock)>0).length,out=items.filter(x=>Number(x.stock)<=0).length,value=items.reduce((s,x)=>s+Number(x.purchase_price||0)*Number(x.stock||0),0);
- return <AppLayout><PageHeader title="Items & Stock" subtitle="Manage products, pricing, GST and inventory availability" />{message.text&&<Alert severity={message.type} sx={{mb:2.5}}>{message.text}</Alert>}
- <Grid container spacing={2.5} mb={3}>{[["Total products",items.length],["Low stock",low],["Out of stock",out],["Stock value",money(value)]].map(([l,v])=><Grid key={l} size={{xs:12,sm:6,lg:3}}><Card><CardContent><Typography variant="body2" color="text.secondary">{l}</Typography><Typography variant="h5" mt={.7}>{v}</Typography></CardContent></Card></Grid>)}</Grid>
- <Grid container spacing={3}><Grid size={{xs:12,xl:4}}><Card><CardContent sx={{p:3}}><Stack direction="row" spacing={1.5} alignItems="center" sx={{mb:3}}><Box sx={{width:42,height:42,borderRadius:2.5,bgcolor:"primary.light",color:"primary.main",display:"grid",placeItems:"center"}}><AddBoxRoundedIcon/></Box><Box><Typography variant="h6">{editing?"Edit inventory item":"Add inventory item"}</Typography><Typography variant="body2" color="text.secondary">Enter product and stock information.</Typography></Box></Stack><Grid container spacing={2}>{[["Item Name","item_name"],["Barcode","barcode"],["Purchase Price","purchase_price","number"],["MRP","mrp","number"],["Sale Price","sale_price","number"],["GST %","gst_percent","number"],["Opening Stock","stock","number"]].map(([l,k,t])=><Grid key={k} size={{xs:12,sm:k==="item_name"||k==="barcode"?12:6}}><TextField type={t||"text"} label={l} value={form[k]} onChange={e=>setForm({...form,[k]:e.target.value})}/></Grid>)}</Grid><Button fullWidth variant="contained" onClick={save} disabled={saving} sx={{mt:2.5}}>{saving?"Saving...":editing?"Update Item":"Save Item"}</Button>{editing&&<Button fullWidth sx={{mt:1}} onClick={()=>{setEditing(null);setForm(emptyForm)}}>Cancel Edit</Button>}<input hidden ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={onImport}/><Button fullWidth variant="outlined" startIcon={<UploadFileRoundedIcon/>} sx={{mt:1.25}} onClick={()=>fileRef.current?.click()}>Import Excel / CSV</Button></CardContent></Card></Grid>
- <Grid size={{xs:12,xl:8}}><Card><CardContent sx={{p:0}}><Box sx={{p:3,display:"flex",justifyContent:"space-between",gap:2,flexDirection:{xs:"column",sm:"row"}}}><Box><Typography variant="h6">Inventory catalogue</Typography><Typography variant="body2" color="text.secondary" sx={{mt:.5}}>Search, edit and maintain stock records.</Typography></Box><TextField sx={{maxWidth:320}} placeholder="Search item or barcode" value={search} onChange={e=>setSearch(e.target.value)} InputProps={{startAdornment:<InputAdornment position="start"><SearchRoundedIcon/></InputAdornment>}}/></Box><TableContainer><Table><TableHead><TableRow><TableCell>Product</TableCell><TableCell>Barcode</TableCell><TableCell align="right">MRP</TableCell><TableCell align="right">Sale</TableCell><TableCell align="center">GST</TableCell><TableCell align="center">Stock</TableCell><TableCell align="center">Actions</TableCell></TableRow></TableHead><TableBody>{filtered.map(x=><TableRow key={x.id} hover><TableCell><Typography fontWeight={700}>{x.item_name}</Typography><Typography variant="caption" color="text.secondary">Purchase {money(x.purchase_price)}</Typography></TableCell><TableCell>{x.barcode}</TableCell><TableCell align="right">{money(x.mrp)}</TableCell><TableCell align="right"><Typography fontWeight={700}>{money(x.sale_price)}</Typography></TableCell><TableCell align="center">{x.gst_percent}%</TableCell><TableCell align="center"><Chip size="small" label={x.stock} color={Number(x.stock)<=0?"error":Number(x.stock)<=5?"warning":"success"}/></TableCell><TableCell align="center"><Tooltip title="Edit"><IconButton onClick={()=>edit(x)}><EditRoundedIcon/></IconButton></Tooltip><Tooltip title="Delete"><IconButton color="error" onClick={()=>remove(x)}><DeleteOutlineRoundedIcon/></IconButton></Tooltip></TableCell></TableRow>)}{!filtered.length&&<TableRow><TableCell colSpan={7}><Box sx={{py:7,textAlign:"center"}}><Typography fontWeight={700}>No inventory items found</Typography></Box></TableCell></TableRow>}</TableBody></Table></TableContainer></CardContent></Card></Grid></Grid></AppLayout>
+
+const money = (value) => new Intl.NumberFormat("en-IN", {
+  style: "currency", currency: "INR", maximumFractionDigits: 2,
+}).format(Number(value || 0));
+
+const EMPTY_FORM = {
+  item_name: "", barcode: "", purchase_price: "", mrp: "",
+  sale_price: "", gst_percent: "0", stock: "0",
+};
+
+const numberValue = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const stockStatus = (stock) => {
+  const value = Number(stock || 0);
+  if (value <= 0) return { label: "Out of stock", color: "error" };
+  if (value <= 5) return { label: "Low stock", color: "warning" };
+  return { label: "In stock", color: "success" };
+};
+
+export default function Items() {
+  const [items, setItems] = useState([]);
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [message, setMessage] = useState({ type: "", text: "" });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const fileRef = useRef(null);
+
+  const load = async (silent = false) => {
+    try {
+      if (!silent) setLoading(true);
+      const data = await getItems();
+      setItems(Array.isArray(data) ? data : []);
+    } catch (error) {
+      setMessage({ type: "error", text: error.message });
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const filtered = useMemo(() => items.filter((item) => {
+    const term = search.trim().toLowerCase();
+    const stock = Number(item.stock || 0);
+    const matchesSearch = !term || `${item.item_name} ${item.barcode}`.toLowerCase().includes(term);
+    const matchesFilter = filter === "all" ||
+      (filter === "in" && stock > 5) ||
+      (filter === "low" && stock > 0 && stock <= 5) ||
+      (filter === "out" && stock <= 0);
+    return matchesSearch && matchesFilter;
+  }), [items, search, filter]);
+
+  const summary = useMemo(() => ({
+    products: items.length,
+    totalStock: items.reduce((sum, item) => sum + Number(item.stock || 0), 0),
+    inventoryValue: items.reduce((sum, item) => sum + Number(item.purchase_price || 0) * Number(item.stock || 0), 0),
+    lowStock: items.filter((item) => Number(item.stock || 0) > 0 && Number(item.stock || 0) <= 5).length,
+    outOfStock: items.filter((item) => Number(item.stock || 0) <= 0).length,
+  }), [items]);
+
+  const openAdd = () => {
+    setEditing(null);
+    setForm(EMPTY_FORM);
+    setDialogOpen(true);
+  };
+
+  const openEdit = (item) => {
+    setEditing(item);
+    setForm({
+      item_name: item.item_name ?? "",
+      barcode: item.barcode ?? "",
+      purchase_price: item.purchase_price ?? "",
+      mrp: item.mrp ?? "",
+      sale_price: item.sale_price ?? "",
+      gst_percent: item.gst_percent ?? "0",
+      stock: item.stock ?? "0",
+    });
+    setDialogOpen(true);
+  };
+
+  const validate = () => {
+    const purchase = numberValue(form.purchase_price);
+    const mrp = numberValue(form.mrp);
+    const sale = numberValue(form.sale_price);
+    const gst = numberValue(form.gst_percent);
+    const stock = numberValue(form.stock);
+    if (!form.item_name.trim()) return "Item name is required.";
+    if (!form.barcode.trim()) return "Barcode is required.";
+    if ([purchase, mrp, sale, gst, stock].some((value) => value < 0)) return "Negative values are not allowed.";
+    if (sale > mrp) return "Sale price cannot exceed MRP.";
+    if (purchase > sale) return "Purchase price cannot exceed sale price.";
+    if (!Number.isInteger(stock)) return "Stock must be a whole number.";
+    return "";
+  };
+
+  const payload = () => ({
+    item_name: form.item_name.trim(), barcode: form.barcode.trim(),
+    purchase_price: numberValue(form.purchase_price), mrp: numberValue(form.mrp),
+    sale_price: numberValue(form.sale_price), gst_percent: numberValue(form.gst_percent),
+    stock: numberValue(form.stock),
+  });
+
+  const save = async () => {
+    const error = validate();
+    if (error) return setMessage({ type: "warning", text: error });
+    try {
+      setSaving(true);
+      if (editing) await updateItem(editing.id, payload());
+      else await addItem(payload());
+      await load(true);
+      setDialogOpen(false);
+      setMessage({ type: "success", text: editing ? "Item updated successfully." : "Item added successfully." });
+      setEditing(null);
+      setForm(EMPTY_FORM);
+    } catch (error) {
+      setMessage({ type: "error", text: error.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (item) => {
+    if (!window.confirm(`Delete "${item.item_name}"?`)) return;
+    try {
+      await deleteItem(item.id);
+      await load(true);
+      setMessage({ type: "success", text: "Item deleted successfully." });
+    } catch (error) {
+      setMessage({ type: "error", text: error.message });
+    }
+  };
+
+  const importFile = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      setImporting(true);
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data);
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+      const normalized = rows.map((row) => ({
+        item_name: String(row.item_name || row["Item Name"] || "").trim(),
+        barcode: String(row.barcode || row.Barcode || "").trim(),
+        purchase_price: numberValue(row.purchase_price || row["Purchase Price"]),
+        mrp: numberValue(row.mrp || row.MRP || row["MRP Price"] || row.sale_price || row["Sale Price"]),
+        sale_price: numberValue(row.sale_price || row["Sale Price"]),
+        gst_percent: numberValue(row.gst_percent || row["GST %"]),
+        stock: numberValue(row.stock || row.Stock),
+      })).filter((row) => row.item_name && row.barcode);
+      if (!normalized.length) throw new Error("No valid rows found in the file.");
+      const invalid = normalized.find((row) => row.purchase_price < 0 || row.mrp < 0 || row.sale_price < 0 || row.gst_percent < 0 || row.stock < 0 || row.sale_price > row.mrp || row.purchase_price > row.sale_price || !Number.isInteger(row.stock));
+      if (invalid) throw new Error(`Invalid pricing or stock for ${invalid.item_name}.`);
+      const result = await importItems(normalized);
+      await load(true);
+      setMessage({ type: "success", text: `${result.created || 0} items imported. ${result.skipped?.length || 0} duplicate barcodes skipped.` });
+    } catch (error) {
+      setMessage({ type: "error", text: error.message });
+    } finally {
+      setImporting(false);
+      event.target.value = "";
+    }
+  };
+
+  const columns = [
+    { field: "item_name", headerName: "Product", minWidth: 220, flex: 1.2,
+      renderCell: ({ row }) => <Box sx={{ py: 1 }}><Typography fontWeight={700}>{row.item_name}</Typography><Typography variant="caption" color="text.secondary">Purchase {money(row.purchase_price)}</Typography></Box> },
+    { field: "barcode", headerName: "Barcode", minWidth: 150, flex: 0.8 },
+    { field: "mrp", headerName: "MRP", minWidth: 120, align: "right", headerAlign: "right", valueFormatter: (value) => money(value) },
+    { field: "sale_price", headerName: "Sale Price", minWidth: 130, align: "right", headerAlign: "right", valueFormatter: (value) => money(value) },
+    { field: "gst_percent", headerName: "GST", minWidth: 85, align: "center", headerAlign: "center", valueFormatter: (value) => `${Number(value || 0)}%` },
+    { field: "stock", headerName: "Stock", minWidth: 85, align: "center", headerAlign: "center" },
+    { field: "status", headerName: "Status", minWidth: 125, sortable: false, renderCell: ({ row }) => { const status = stockStatus(row.stock); return <Chip size="small" label={status.label} color={status.color} variant="outlined" />; } },
+    { field: "actions", headerName: "Actions", minWidth: 170, sortable: false, renderCell: ({ row }) => <Stack direction="row" spacing={0.5}><Button size="small" startIcon={<EditRoundedIcon />} onClick={(e) => { e.stopPropagation(); openEdit(row); }}>Edit</Button><Button size="small" color="error" startIcon={<DeleteOutlineRoundedIcon />} onClick={(e) => { e.stopPropagation(); remove(row); }}>Delete</Button></Stack> },
+  ];
+
+  const cards = [
+    ["Total products", summary.products, "Active inventory records"],
+    ["Total stock", summary.totalStock, "Units currently available"],
+    ["Inventory value", money(summary.inventoryValue), "Based on purchase price"],
+    ["Low stock", summary.lowStock, "Between 1 and 5 units"],
+    ["Out of stock", summary.outOfStock, "Requires replenishment"],
+  ];
+
+  return <AppLayout>
+    <PageHeader title="Items & Inventory" subtitle="Manage products, pricing, GST and stock from one place" />
+    {message.text && <Alert severity={message.type} sx={{ mb: 2.5 }} onClose={() => setMessage({ type: "", text: "" })}>{message.text}</Alert>}
+
+    <Stack direction={{ xs: "column", md: "row" }} spacing={1.25} justifyContent="flex-end" sx={{ mb: 2.5 }}>
+      <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={openAdd}>Add Item</Button>
+      <Button variant="outlined" startIcon={<UploadFileRoundedIcon />} onClick={() => fileRef.current?.click()} disabled={importing}>{importing ? "Importing..." : "Import Excel / CSV"}</Button>
+      <Button variant="outlined" startIcon={<RefreshRoundedIcon />} onClick={() => load()} disabled={loading}>Refresh</Button>
+      <input hidden ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={importFile} />
+    </Stack>
+
+    <Grid container spacing={2.25} sx={{ mb: 3 }}>
+      {cards.map(([label, value, helper]) => <Grid key={label} size={{ xs: 12, sm: 6, lg: 2.4 }}><Card sx={{ height: "100%" }}><CardContent><Stack direction="row" spacing={1.25} alignItems="center"><Box sx={{ width: 42, height: 42, borderRadius: 2.5, bgcolor: "primary.light", color: "primary.main", display: "grid", placeItems: "center" }}><Inventory2RoundedIcon fontSize="small" /></Box><Box minWidth={0}><Typography variant="body2" color="text.secondary">{label}</Typography><Typography variant="h6" fontWeight={800} noWrap>{value}</Typography></Box></Stack><Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1.5 }}>{helper}</Typography></CardContent></Card></Grid>)}
+    </Grid>
+
+    <Card><CardContent sx={{ p: 0 }}><Box sx={{ p: 2.5, display: "flex", gap: 1.5, justifyContent: "space-between", flexDirection: { xs: "column", md: "row" }, borderBottom: 1, borderColor: "divider" }}><Box><Typography variant="h6">Inventory catalogue</Typography><Typography variant="body2" color="text.secondary">Search, filter, edit and maintain inventory records.</Typography></Box><Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}><TextField size="small" placeholder="Search item or barcode" value={search} onChange={(e) => setSearch(e.target.value)} sx={{ minWidth: { sm: 280 } }} InputProps={{ startAdornment: <InputAdornment position="start"><SearchRoundedIcon fontSize="small" /></InputAdornment> }} /><FormControl size="small" sx={{ minWidth: 160 }}><InputLabel>Stock Status</InputLabel><Select label="Stock Status" value={filter} onChange={(e) => setFilter(e.target.value)}><MenuItem value="all">All Stock</MenuItem><MenuItem value="in">In Stock</MenuItem><MenuItem value="low">Low Stock</MenuItem><MenuItem value="out">Out of Stock</MenuItem></Select></FormControl></Stack></Box><DataGrid autoHeight rows={filtered} columns={columns} loading={loading} disableRowSelectionOnClick pageSizeOptions={[10, 25, 50, 100]} initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }} getRowHeight={() => "auto"} sx={{ border: 0, "& .MuiDataGrid-columnHeaders": { bgcolor: "background.default" }, "& .MuiDataGrid-cell": { py: 1 } }} /></CardContent></Card>
+
+    <Dialog open={dialogOpen} onClose={() => !saving && setDialogOpen(false)} fullWidth maxWidth="md"><DialogTitle>{editing ? "Edit Inventory Item" : "Add Inventory Item"}</DialogTitle><DialogContent dividers><Grid container spacing={2} sx={{ pt: 0.5 }}>
+      <Grid size={{ xs: 12, md: 8 }}><TextField fullWidth required label="Item Name" value={form.item_name} onChange={(e) => setForm({ ...form, item_name: e.target.value })} autoFocus /></Grid>
+      <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth required label="Barcode" value={form.barcode} onChange={(e) => setForm({ ...form, barcode: e.target.value })} /></Grid>
+      {[['Purchase Price','purchase_price'],['MRP','mrp'],['Sale Price','sale_price'],['GST %','gst_percent'],[editing ? 'Current Stock' : 'Opening Stock','stock']].map(([label, key]) => <Grid key={key} size={{ xs: 12, sm: 6, md: key === 'stock' || key === 'gst_percent' ? 6 : 4 }}><TextField fullWidth type="number" label={label} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} inputProps={{ min: 0, step: key === 'stock' ? 1 : '0.01' }} /></Grid>)}
+    </Grid></DialogContent><DialogActions sx={{ px: 3, py: 2 }}><Button onClick={() => setDialogOpen(false)} disabled={saving}>Cancel</Button><Button variant="contained" onClick={save} disabled={saving}>{saving ? "Saving..." : editing ? "Update Item" : "Save Item"}</Button></DialogActions></Dialog>
+  </AppLayout>;
 }

@@ -94,6 +94,30 @@ def to_float(value: Any) -> float:
         return 0.0
 
 
+def validate_item_values(
+    item_name: str,
+    barcode: str,
+    purchase_price: float,
+    mrp: float,
+    sale_price: float,
+    gst_percent: float,
+    stock: int,
+):
+    if not str(item_name or "").strip():
+        raise HTTPException(status_code=400, detail="Item name is required")
+    if not str(barcode or "").strip():
+        raise HTTPException(status_code=400, detail="Barcode is required")
+    values = [purchase_price, mrp, sale_price, gst_percent, stock]
+    if any(to_float(value) < 0 for value in values):
+        raise HTTPException(status_code=400, detail="Negative values are not allowed")
+    if to_float(sale_price) > to_float(mrp):
+        raise HTTPException(status_code=400, detail="Sale price cannot exceed MRP")
+    if to_float(purchase_price) > to_float(sale_price):
+        raise HTTPException(status_code=400, detail="Purchase price cannot exceed sale price")
+    if int(stock) != stock:
+        raise HTTPException(status_code=400, detail="Stock must be a whole number")
+
+
 @app.get("/")
 def home():
     return {"message": "Resolvent Billing Software API Running"}
@@ -212,12 +236,18 @@ def get_customers(db: Session = Depends(get_db)):
 
 @app.post("/items")
 def add_item(data: schemas.ItemCreate, db: Session = Depends(get_db)):
-    existing = db.query(models.Item).filter(models.Item.barcode == data.barcode).first()
-
+    validate_item_values(
+        data.item_name, data.barcode, data.purchase_price, data.mrp,
+        data.sale_price, data.gst_percent, data.stock,
+    )
+    normalized_barcode = data.barcode.strip()
+    existing = db.query(models.Item).filter(models.Item.barcode == normalized_barcode).first()
     if existing:
         raise HTTPException(status_code=400, detail="Barcode already exists")
-
-    item = models.Item(**data.dict())
+    item_data = data.dict()
+    item_data["item_name"] = data.item_name.strip()
+    item_data["barcode"] = normalized_barcode
+    item = models.Item(**item_data)
     db.add(item)
     db.commit()
     db.refresh(item)
@@ -894,14 +924,22 @@ def update_item(item_id: int, data: schemas.ItemUpdate, db: Session = Depends(ge
     item = db.query(models.Item).filter(models.Item.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
+    validate_item_values(
+        data.item_name, data.barcode, data.purchase_price, data.mrp,
+        data.sale_price, data.gst_percent, data.stock,
+    )
+    normalized_barcode = data.barcode.strip()
     duplicate = (
         db.query(models.Item)
-        .filter(models.Item.barcode == data.barcode, models.Item.id != item_id)
+        .filter(models.Item.barcode == normalized_barcode, models.Item.id != item_id)
         .first()
     )
     if duplicate:
         raise HTTPException(status_code=400, detail="Barcode already exists")
-    for key, value in data.dict().items():
+    item_data = data.dict()
+    item_data["item_name"] = data.item_name.strip()
+    item_data["barcode"] = normalized_barcode
+    for key, value in item_data.items():
         setattr(item, key, value)
     db.commit()
     db.refresh(item)
