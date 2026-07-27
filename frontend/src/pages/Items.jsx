@@ -166,6 +166,52 @@ const SAMPLE_ROW = {
   stock: 50,
 };
 
+
+const ADJUSTMENT_REASONS = [
+  "New Purchase",
+  "Damaged",
+  "Expired",
+  "Returned by Customer",
+  "Supplier Return",
+  "Stock Correction",
+  "Opening Stock",
+  "MRP Update",
+  "Sale Price Update",
+  "GST % Update",
+  "Purchase Price Update",
+  "Physical Verification",
+  "Free Sample",
+  "Other",
+];
+
+const hasPriceOrTaxChange = (row) =>
+  Number(row.purchase_price || 0) !== Number(row.original_purchase_price || 0) ||
+  Number(row.mrp || 0) !== Number(row.original_mrp || 0) ||
+  Number(row.sale_price || 0) !== Number(row.original_sale_price || 0) ||
+  Number(row.gst_percent || 0) !== Number(row.original_gst_percent || 0);
+
+const resolveAutomaticReason = (row) => {
+  const changedFields = [];
+
+  if (Number(row.purchase_price || 0) !== Number(row.original_purchase_price || 0)) {
+    changedFields.push("Purchase Price Update");
+  }
+
+  if (Number(row.mrp || 0) !== Number(row.original_mrp || 0)) {
+    changedFields.push("MRP Update");
+  }
+
+  if (Number(row.sale_price || 0) !== Number(row.original_sale_price || 0)) {
+    changedFields.push("Sale Price Update");
+  }
+
+  if (Number(row.gst_percent || 0) !== Number(row.original_gst_percent || 0)) {
+    changedFields.push("GST % Update");
+  }
+
+  return changedFields.length === 1 ? changedFields[0] : "";
+};
+
 const stockStatus = (stock) => {
   const value = Number(stock || 0);
   if (value <= 0) return { label: "Out of stock", color: "error" };
@@ -415,9 +461,14 @@ export default function Items() {
         mrp: Number(item.mrp || 0),
         sale_price: Number(item.sale_price || 0),
         gst_percent: Number(item.gst_percent || 0),
+        original_purchase_price: Number(item.purchase_price || 0),
+        original_mrp: Number(item.mrp || 0),
+        original_sale_price: Number(item.sale_price || 0),
+        original_gst_percent: Number(item.gst_percent || 0),
         current_stock: Number(item.stock || 0),
         stock_adjustment: 0,
         adjustment_reason: "",
+        custom_reason: "",
       }))
     );
     setModifiedRowIds(new Set());
@@ -437,11 +488,32 @@ export default function Items() {
       ...newRow,
       item_name: String(newRow.item_name || "").trimStart(),
       barcode: String(newRow.barcode || "").trim(),
+      adjustment_reason: String(newRow.adjustment_reason || ""),
+      custom_reason: String(newRow.custom_reason || ""),
     };
 
     numericFields.forEach((field) => {
       normalizedRow[field] = numberValue(newRow[field]);
     });
+
+    const priceReason = resolveAutomaticReason(normalizedRow);
+    const reasonWasManuallyChanged =
+      normalizedRow.adjustment_reason !== oldRow.adjustment_reason;
+
+    if (
+      !reasonWasManuallyChanged &&
+      Number(normalizedRow.stock_adjustment || 0) === 0 &&
+      priceReason
+    ) {
+      normalizedRow.adjustment_reason = priceReason;
+    }
+
+    if (
+      normalizedRow.adjustment_reason !== "Other" &&
+      normalizedRow.custom_reason
+    ) {
+      normalizedRow.custom_reason = "";
+    }
 
     const changed = Object.keys(normalizedRow).some(
       (key) => normalizedRow[key] !== oldRow[key]
@@ -509,8 +581,22 @@ export default function Items() {
         return `Stock cannot become negative for ${row.item_name}.`;
       }
 
-      if (adjustment !== 0 && !String(row.adjustment_reason || "").trim()) {
-        return `Adjustment reason is required for ${row.item_name}.`;
+      const rowWasModified = modifiedRowIds.has(row.id);
+      const priceOrTaxChanged = hasPriceOrTaxChange(row);
+
+      if (
+        rowWasModified &&
+        (adjustment !== 0 || priceOrTaxChanged) &&
+        !String(row.adjustment_reason || "").trim()
+      ) {
+        return `Reason is required for ${row.item_name}.`;
+      }
+
+      if (
+        row.adjustment_reason === "Other" &&
+        !String(row.custom_reason || "").trim()
+      ) {
+        return `Custom reason is required for ${row.item_name}.`;
       }
     }
 
@@ -544,7 +630,10 @@ export default function Items() {
         sale_price: numberValue(row.sale_price),
         gst_percent: numberValue(row.gst_percent),
         stock_adjustment: numberValue(row.stock_adjustment),
-        adjustment_reason: String(row.adjustment_reason || "").trim(),
+        adjustment_reason:
+          row.adjustment_reason === "Other"
+            ? `Other - ${String(row.custom_reason || "").trim()}`
+            : String(row.adjustment_reason || "").trim(),
       }));
 
       const result = await bulkUpdateItems(payloadRows);
@@ -632,7 +721,7 @@ export default function Items() {
     },
     {
       field: "stock_adjustment",
-      headerName: "Adjustment",
+      headerName: "Stock +/-",
       type: "number",
       minWidth: 120,
       editable: true,
@@ -640,7 +729,7 @@ export default function Items() {
     },
     {
       field: "new_stock",
-      headerName: "New Stock",
+      headerName: "Updated Stock",
       type: "number",
       minWidth: 110,
       valueGetter: (_value, row) =>
@@ -649,9 +738,40 @@ export default function Items() {
     {
       field: "adjustment_reason",
       headerName: "Reason",
+      type: "singleSelect",
+      valueOptions: ADJUSTMENT_REASONS,
+      minWidth: 210,
+      flex: 1,
+      editable: true,
+      renderCell: ({ value, row }) => {
+        const hasRelevantChange =
+          Number(row.stock_adjustment || 0) !== 0 || hasPriceOrTaxChange(row);
+
+        if (!hasRelevantChange && !value) {
+          return (
+            <Typography variant="body2" color="text.disabled">
+              —
+            </Typography>
+          );
+        }
+
+        return value || "Select reason";
+      },
+    },
+    {
+      field: "custom_reason",
+      headerName: "Custom Reason",
       minWidth: 220,
       flex: 1,
       editable: true,
+      renderCell: ({ value, row }) =>
+        row.adjustment_reason === "Other" ? (
+          value || "Enter custom reason"
+        ) : (
+          <Typography variant="body2" color="text.disabled">
+            —
+          </Typography>
+        ),
     },
   ];
 
@@ -771,8 +891,9 @@ export default function Items() {
 
       <DialogContent dividers sx={{ p: 0 }}>
         <Alert severity="info" sx={{ borderRadius: 0 }}>
-          Double-click a cell to edit it. Positive stock adjustments add stock;
-          negative adjustments reduce stock. A reason is required whenever stock changes.
+          Double-click a cell to edit it. Positive stock values add inventory and
+          negative values reduce it. Select a reason for stock, price or GST changes.
+          Choose Other to enter a custom reason.
         </Alert>
 
         <Box sx={{ height: 560, width: "100%" }}>
@@ -780,6 +901,20 @@ export default function Items() {
             rows={bulkRows}
             columns={bulkColumns}
             processRowUpdate={processBulkRowUpdate}
+            isCellEditable={(params) => {
+              if (params.field === "custom_reason") {
+                return params.row.adjustment_reason === "Other";
+              }
+
+              if (params.field === "adjustment_reason") {
+                return (
+                  Number(params.row.stock_adjustment || 0) !== 0 ||
+                  hasPriceOrTaxChange(params.row)
+                );
+              }
+
+              return params.colDef.editable === true;
+            }}
             onProcessRowUpdateError={(error) =>
               setMessage({ type: "error", text: error.message })
             }
