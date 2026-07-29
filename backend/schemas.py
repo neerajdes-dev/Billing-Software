@@ -49,6 +49,10 @@ class BulkItemUpdateRow(BaseModel):
     adjustment_reason: str = "Bulk update"
 class BulkItemUpdate(BaseModel):
     items: List[BulkItemUpdateRow]
+
+class StockAdjustmentCreate(BaseModel):
+    adjustment: int
+    reason: str
 class SaleProduct(BaseModel):
     item_id: int
     quantity: int

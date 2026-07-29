@@ -215,6 +215,18 @@ export const bulkUpdateItems = (items) =>
     method: "PUT",
     body: JSON.stringify({ items }),
   });
+// ================================
+// Stock Adjustment APIs
+// ================================
+
+export const addStockAdjustment = (itemId, data) =>
+  request(`/items/${itemId}/stock-adjustments`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+
+export const getStockAdjustmentHistory = (itemId) =>
+  request(`/items/${itemId}/stock-adjustments`);
 
 export const getCustomerCreditLedger = () =>
   request("/customers/credit-ledger");

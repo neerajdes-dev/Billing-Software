@@ -19,9 +19,22 @@ import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import EditNoteRoundedIcon from "@mui/icons-material/EditNoteRounded";
 import SaveRoundedIcon from "@mui/icons-material/SaveRounded";
 import FileDownloadRoundedIcon from "@mui/icons-material/FileDownloadRounded";
+import AddBoxRoundedIcon from "@mui/icons-material/AddBoxRounded";
+import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
+import TrendingUpRoundedIcon from "@mui/icons-material/TrendingUpRounded";
+import TrendingDownRoundedIcon from "@mui/icons-material/TrendingDownRounded";
 import AppLayout from "../components/AppLayout";
 import PageHeader from "../components/PageHeader";
-import { addItem, bulkUpdateItems, deleteItem, getItems, importItems, updateItem } from "../services/api";
+import {
+  addItem,
+  addStockAdjustment,
+  bulkUpdateItems,
+  deleteItem,
+  getItems,
+  getStockAdjustmentHistory,
+  importItems,
+  updateItem,
+} from "../services/api";
 
 const money = (value) => new Intl.NumberFormat("en-IN", {
   style: "currency", currency: "INR", maximumFractionDigits: 2,
@@ -232,6 +245,19 @@ export default function Items() {
   const [bulkRows, setBulkRows] = useState([]);
   const [modifiedRowIds, setModifiedRowIds] = useState(new Set());
   const [bulkSaving, setBulkSaving] = useState(false);
+  const [adjustDialogOpen, setAdjustDialogOpen] = useState(false);
+  const [adjustingItem, setAdjustingItem] = useState(null);
+  const [adjustmentForm, setAdjustmentForm] = useState({
+    adjustment: "",
+    reason: "",
+    custom_reason: "",
+  });
+  const [adjustmentSaving, setAdjustmentSaving] = useState(false);
+  const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
+  const [historyItem, setHistoryItem] = useState(null);
+  const [historyRows, setHistoryRows] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyReasonFilter, setHistoryReasonFilter] = useState("all");
   const [importMenuAnchor, setImportMenuAnchor] = useState(null);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -775,6 +801,198 @@ export default function Items() {
     },
   ];
 
+
+  const openStockAdjustment = (item) => {
+    setAdjustingItem(item);
+    setAdjustmentForm({
+      adjustment: "",
+      reason: "",
+      custom_reason: "",
+    });
+    setAdjustDialogOpen(true);
+  };
+
+  const saveStockAdjustment = async () => {
+    const adjustment = Number(adjustmentForm.adjustment || 0);
+
+    if (!Number.isInteger(adjustment) || adjustment === 0) {
+      setMessage({
+        type: "warning",
+        text: "Enter a non-zero whole-number stock adjustment.",
+      });
+      return;
+    }
+
+    if (Number(adjustingItem?.stock || 0) + adjustment < 0) {
+      setMessage({
+        type: "warning",
+        text: "The updated stock cannot be negative.",
+      });
+      return;
+    }
+
+    if (!adjustmentForm.reason) {
+      setMessage({
+        type: "warning",
+        text: "Select an adjustment reason.",
+      });
+      return;
+    }
+
+    if (
+      adjustmentForm.reason === "Other" &&
+      !adjustmentForm.custom_reason.trim()
+    ) {
+      setMessage({
+        type: "warning",
+        text: "Enter a custom reason.",
+      });
+      return;
+    }
+
+    const reason =
+      adjustmentForm.reason === "Other"
+        ? `Other - ${adjustmentForm.custom_reason.trim()}`
+        : adjustmentForm.reason;
+
+    try {
+      setAdjustmentSaving(true);
+
+      await addStockAdjustment(adjustingItem.id, {
+        adjustment,
+        reason,
+      });
+
+      await load(true);
+      setAdjustDialogOpen(false);
+      setAdjustingItem(null);
+      setMessage({
+        type: "success",
+        text: "Stock adjusted successfully.",
+      });
+    } catch (error) {
+      setMessage({ type: "error", text: error.message });
+    } finally {
+      setAdjustmentSaving(false);
+    }
+  };
+
+  const openStockHistory = async (item) => {
+    setHistoryDialogOpen(true);
+    setHistoryItem(item);
+    setHistoryRows([]);
+    setHistoryReasonFilter("all");
+    setHistoryLoading(true);
+
+    try {
+      const result = await getStockAdjustmentHistory(item.id);
+      setHistoryItem(result.item || item);
+      setHistoryRows(Array.isArray(result.history) ? result.history : []);
+    } catch (error) {
+      setMessage({ type: "error", text: error.message });
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const filteredHistoryRows = useMemo(() => {
+    if (historyReasonFilter === "all") return historyRows;
+
+    return historyRows.filter(
+      (row) => row.reason === historyReasonFilter
+    );
+  }, [historyRows, historyReasonFilter]);
+
+  const historyReasonOptions = useMemo(
+    () => [...new Set(historyRows.map((row) => row.reason).filter(Boolean))],
+    [historyRows]
+  );
+
+  const exportStockHistory = () => {
+    const exportRows = filteredHistoryRows.map((row) => ({
+      date_time: row.created_at
+        ? new Date(row.created_at).toLocaleString("en-IN")
+        : "",
+      previous_stock: row.previous_stock,
+      adjustment: row.adjustment,
+      updated_stock: row.new_stock,
+      reason: row.reason,
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(exportRows);
+    worksheet["!cols"] = [
+      { wch: 22 },
+      { wch: 16 },
+      { wch: 14 },
+      { wch: 16 },
+      { wch: 28 },
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Stock History");
+
+    const safeName = String(historyItem?.item_name || "Item")
+      .replace(/[\\/:*?"<>|]/g, "_");
+
+    XLSX.writeFile(workbook, `${safeName}_Stock_History.xlsx`);
+  };
+
+  const historyColumns = [
+    {
+      field: "created_at",
+      headerName: "Date & Time",
+      minWidth: 190,
+      flex: 1,
+      valueFormatter: (value) =>
+        value ? new Date(value).toLocaleString("en-IN") : "—",
+    },
+    {
+      field: "previous_stock",
+      headerName: "Previous",
+      type: "number",
+      minWidth: 110,
+      align: "center",
+      headerAlign: "center",
+    },
+    {
+      field: "adjustment",
+      headerName: "Change",
+      type: "number",
+      minWidth: 110,
+      align: "center",
+      headerAlign: "center",
+      renderCell: ({ value }) => (
+        <Chip
+          size="small"
+          icon={
+            Number(value) > 0 ? (
+              <TrendingUpRoundedIcon />
+            ) : (
+              <TrendingDownRoundedIcon />
+            )
+          }
+          color={Number(value) > 0 ? "success" : "error"}
+          label={`${Number(value) > 0 ? "+" : ""}${value}`}
+          variant="outlined"
+        />
+      ),
+    },
+    {
+      field: "new_stock",
+      headerName: "Updated",
+      type: "number",
+      minWidth: 110,
+      align: "center",
+      headerAlign: "center",
+    },
+    {
+      field: "reason",
+      headerName: "Reason",
+      minWidth: 220,
+      flex: 1.4,
+    },
+  ];
+
   const columns = [
     { field: "item_name", headerName: "Product", minWidth: 220, flex: 1.2,
       renderCell: ({ row }) => <Box sx={{ py: 1 }}><Typography fontWeight={700}>{row.item_name}</Typography><Typography variant="caption" color="text.secondary">Purchase {money(row.purchase_price)}</Typography></Box> },
@@ -784,7 +1002,65 @@ export default function Items() {
     { field: "gst_percent", headerName: "GST", minWidth: 85, align: "center", headerAlign: "center", valueFormatter: (value) => `${Number(value || 0)}%` },
     { field: "stock", headerName: "Stock", minWidth: 85, align: "center", headerAlign: "center" },
     { field: "status", headerName: "Status", minWidth: 125, sortable: false, renderCell: ({ row }) => { const status = stockStatus(row.stock); return <Chip size="small" label={status.label} color={status.color} variant="outlined" />; } },
-    { field: "actions", headerName: "Actions", minWidth: 170, sortable: false, renderCell: ({ row }) => <Stack direction="row" spacing={0.5}><Button size="small" startIcon={<EditRoundedIcon />} onClick={(e) => { e.stopPropagation(); openEdit(row); }}>Edit</Button><Button size="small" color="error" startIcon={<DeleteOutlineRoundedIcon />} onClick={(e) => { e.stopPropagation(); remove(row); }}>Delete</Button></Stack> },
+    {
+      field: "actions",
+      headerName: "Actions",
+      minWidth: 330,
+      sortable: false,
+      filterable: false,
+      align: "center",
+      headerAlign: "center",
+      renderCell: ({ row }) => (
+        <Stack direction="row" spacing={0.25}>
+          <Button
+            size="small"
+            startIcon={<EditRoundedIcon />}
+            onClick={(event) => {
+              event.stopPropagation();
+              openEdit(row);
+            }}
+          >
+            Edit
+          </Button>
+
+          <Button
+            size="small"
+            color="primary"
+            startIcon={<AddBoxRoundedIcon />}
+            onClick={(event) => {
+              event.stopPropagation();
+              openStockAdjustment(row);
+            }}
+          >
+            Adjust
+          </Button>
+
+          <Button
+            size="small"
+            color="inherit"
+            startIcon={<HistoryRoundedIcon />}
+            onClick={(event) => {
+              event.stopPropagation();
+              openStockHistory(row);
+            }}
+          >
+            History
+          </Button>
+
+          <Button
+            size="small"
+            color="error"
+            startIcon={<DeleteOutlineRoundedIcon />}
+            onClick={(event) => {
+              event.stopPropagation();
+              remove(row);
+            }}
+          >
+            Delete
+          </Button>
+        </Stack>
+      ),
+    },
   ];
 
   const cards = [
@@ -858,6 +1134,219 @@ export default function Items() {
 
     <Card><CardContent sx={{ p: 0 }}><Box sx={{ p: 2.5, display: "flex", gap: 1.5, justifyContent: "space-between", flexDirection: { xs: "column", md: "row" }, borderBottom: 1, borderColor: "divider" }}><Box><Typography variant="h6">Inventory catalogue</Typography><Typography variant="body2" color="text.secondary">Search, filter, edit and maintain inventory records.</Typography></Box><Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}><TextField size="small" placeholder="Search item or barcode" value={search} onChange={(e) => setSearch(e.target.value)} sx={{ minWidth: { sm: 280 } }} InputProps={{ startAdornment: <InputAdornment position="start"><SearchRoundedIcon fontSize="small" /></InputAdornment> }} /><FormControl size="small" sx={{ minWidth: 160 }}><InputLabel>Stock Status</InputLabel><Select label="Stock Status" value={filter} onChange={(e) => setFilter(e.target.value)}><MenuItem value="all">All Stock</MenuItem><MenuItem value="in">In Stock</MenuItem><MenuItem value="low">Low Stock</MenuItem><MenuItem value="out">Out of Stock</MenuItem></Select></FormControl></Stack></Box><DataGrid autoHeight rows={filtered} columns={columns} loading={loading} disableRowSelectionOnClick pageSizeOptions={[10, 25, 50, 100]} initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }} getRowHeight={() => "auto"} sx={{ border: 0, "& .MuiDataGrid-columnHeaders": { bgcolor: "background.default" }, "& .MuiDataGrid-cell": { py: 1 } }} /></CardContent></Card>
 
+
+
+    <Dialog
+      open={adjustDialogOpen}
+      onClose={() => !adjustmentSaving && setAdjustDialogOpen(false)}
+      fullWidth
+      maxWidth="sm"
+    >
+      <DialogTitle>Stock Adjustment</DialogTitle>
+
+      <DialogContent dividers>
+        <Stack spacing={2.25}>
+          <Box>
+            <Typography variant="subtitle1" fontWeight={800}>
+              {adjustingItem?.item_name || "Inventory item"}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Barcode: {adjustingItem?.barcode || "—"}
+            </Typography>
+          </Box>
+
+          <Card variant="outlined">
+            <CardContent>
+              <Grid container spacing={2}>
+                <Grid size={{ xs: 6 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Current Stock
+                  </Typography>
+                  <Typography variant="h5" fontWeight={800}>
+                    {Number(adjustingItem?.stock || 0)}
+                  </Typography>
+                </Grid>
+
+                <Grid size={{ xs: 6 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Updated Stock
+                  </Typography>
+                  <Typography
+                    variant="h5"
+                    fontWeight={800}
+                    color={
+                      Number(adjustmentForm.adjustment || 0) < 0
+                        ? "error.main"
+                        : "success.main"
+                    }
+                  >
+                    {Number(adjustingItem?.stock || 0) +
+                      Number(adjustmentForm.adjustment || 0)}
+                  </Typography>
+                </Grid>
+              </Grid>
+            </CardContent>
+          </Card>
+
+          <TextField
+            fullWidth
+            type="number"
+            label="Stock +/-"
+            value={adjustmentForm.adjustment}
+            onChange={(event) =>
+              setAdjustmentForm((current) => ({
+                ...current,
+                adjustment: event.target.value,
+              }))
+            }
+            helperText="Use a positive number to add stock or a negative number to reduce it."
+            inputProps={{ step: 1 }}
+          />
+
+          <FormControl fullWidth>
+            <InputLabel>Reason</InputLabel>
+            <Select
+              label="Reason"
+              value={adjustmentForm.reason}
+              onChange={(event) =>
+                setAdjustmentForm((current) => ({
+                  ...current,
+                  reason: event.target.value,
+                  custom_reason:
+                    event.target.value === "Other"
+                      ? current.custom_reason
+                      : "",
+                }))
+              }
+            >
+              {ADJUSTMENT_REASONS.map((reason) => (
+                <MenuItem key={reason} value={reason}>
+                  {reason}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+
+          {adjustmentForm.reason === "Other" && (
+            <TextField
+              fullWidth
+              label="Custom Reason"
+              value={adjustmentForm.custom_reason}
+              onChange={(event) =>
+                setAdjustmentForm((current) => ({
+                  ...current,
+                  custom_reason: event.target.value,
+                }))
+              }
+              multiline
+              minRows={2}
+            />
+          )}
+        </Stack>
+      </DialogContent>
+
+      <DialogActions sx={{ px: 3, py: 2 }}>
+        <Button
+          onClick={() => setAdjustDialogOpen(false)}
+          disabled={adjustmentSaving}
+        >
+          Cancel
+        </Button>
+
+        <Button
+          variant="contained"
+          startIcon={<SaveRoundedIcon />}
+          onClick={saveStockAdjustment}
+          disabled={adjustmentSaving}
+        >
+          {adjustmentSaving ? "Saving..." : "Save Adjustment"}
+        </Button>
+      </DialogActions>
+    </Dialog>
+
+    <Dialog
+      open={historyDialogOpen}
+      onClose={() => setHistoryDialogOpen(false)}
+      fullWidth
+      maxWidth="lg"
+    >
+      <DialogTitle>
+        <Stack
+          direction={{ xs: "column", md: "row" }}
+          justifyContent="space-between"
+          alignItems={{ xs: "flex-start", md: "center" }}
+          spacing={1.5}
+        >
+          <Box>
+            <Typography variant="h6" fontWeight={800}>
+              Stock Adjustment History
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {historyItem?.item_name || "Inventory item"} · Current stock{" "}
+              {Number(historyItem?.current_stock ?? historyItem?.stock ?? 0)}
+            </Typography>
+          </Box>
+
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+            <FormControl size="small" sx={{ minWidth: 210 }}>
+              <InputLabel>Reason Filter</InputLabel>
+              <Select
+                label="Reason Filter"
+                value={historyReasonFilter}
+                onChange={(event) =>
+                  setHistoryReasonFilter(event.target.value)
+                }
+              >
+                <MenuItem value="all">All Reasons</MenuItem>
+                {historyReasonOptions.map((reason) => (
+                  <MenuItem key={reason} value={reason}>
+                    {reason}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            <Button
+              variant="outlined"
+              startIcon={<FileDownloadRoundedIcon />}
+              onClick={exportStockHistory}
+              disabled={!filteredHistoryRows.length}
+            >
+              Export Excel
+            </Button>
+          </Stack>
+        </Stack>
+      </DialogTitle>
+
+      <DialogContent dividers sx={{ p: 0 }}>
+        <Box sx={{ height: 500, width: "100%" }}>
+          <DataGrid
+            rows={filteredHistoryRows}
+            columns={historyColumns}
+            loading={historyLoading}
+            disableRowSelectionOnClick
+            pageSizeOptions={[10, 25, 50]}
+            initialState={{
+              pagination: {
+                paginationModel: { pageSize: 10, page: 0 },
+              },
+            }}
+            sx={{
+              border: 0,
+              "& .MuiDataGrid-columnHeaders": {
+                bgcolor: "background.default",
+              },
+            }}
+          />
+        </Box>
+      </DialogContent>
+
+      <DialogActions sx={{ px: 3, py: 2 }}>
+        <Button onClick={() => setHistoryDialogOpen(false)}>
+          Close
+        </Button>
+      </DialogActions>
+    </Dialog>
 
     <Dialog
       open={bulkDialogOpen}

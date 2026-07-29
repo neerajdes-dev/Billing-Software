@@ -919,6 +919,115 @@ def bulk_update_items(data: schemas.BulkItemUpdate, db: Session = Depends(get_db
     return {"message": f"{changed} products updated successfully", "updated": changed}
 
 
+
+
+@app.post("/items/{item_id}/stock-adjustments")
+def create_stock_adjustment(
+    item_id: int,
+    data: schemas.StockAdjustmentCreate,
+    db: Session = Depends(get_db),
+):
+    item = db.query(models.Item).filter(models.Item.id == item_id).first()
+
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    adjustment = int(data.adjustment or 0)
+    reason = str(data.reason or "").strip()
+
+    if adjustment == 0:
+        raise HTTPException(status_code=400, detail="Stock adjustment cannot be zero")
+
+    if not reason:
+        raise HTTPException(status_code=400, detail="Adjustment reason is required")
+
+    previous_stock = int(item.stock or 0)
+    new_stock = previous_stock + adjustment
+
+    if new_stock < 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Stock cannot become negative for {item.item_name}",
+        )
+
+    item.stock = new_stock
+
+    history = models.StockAdjustment(
+        item_id=item.id,
+        previous_stock=previous_stock,
+        adjustment=adjustment,
+        new_stock=new_stock,
+        reason=reason,
+    )
+
+    db.add(history)
+    db.commit()
+    db.refresh(history)
+    db.refresh(item)
+
+    return {
+        "message": "Stock adjusted successfully",
+        "item": {
+            "id": item.id,
+            "item_name": item.item_name,
+            "stock": int(item.stock or 0),
+        },
+        "adjustment": {
+            "id": history.id,
+            "previous_stock": history.previous_stock,
+            "adjustment": history.adjustment,
+            "new_stock": history.new_stock,
+            "reason": history.reason,
+            "created_at": history.created_at.isoformat()
+            if history.created_at
+            else None,
+        },
+    }
+
+
+@app.get("/items/{item_id}/stock-adjustments")
+def get_stock_adjustment_history(
+    item_id: int,
+    db: Session = Depends(get_db),
+):
+    item = db.query(models.Item).filter(models.Item.id == item_id).first()
+
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    records = (
+        db.query(models.StockAdjustment)
+        .filter(models.StockAdjustment.item_id == item_id)
+        .order_by(
+            models.StockAdjustment.created_at.desc(),
+            models.StockAdjustment.id.desc(),
+        )
+        .all()
+    )
+
+    return {
+        "item": {
+            "id": item.id,
+            "item_name": item.item_name,
+            "barcode": item.barcode,
+            "current_stock": int(item.stock or 0),
+        },
+        "history": [
+            {
+                "id": record.id,
+                "previous_stock": int(record.previous_stock or 0),
+                "adjustment": int(record.adjustment or 0),
+                "new_stock": int(record.new_stock or 0),
+                "reason": record.reason,
+                "created_at": record.created_at.isoformat()
+                if record.created_at
+                else None,
+            }
+            for record in records
+        ],
+    }
+
+
 @app.put("/items/{item_id}")
 def update_item(item_id: int, data: schemas.ItemUpdate, db: Session = Depends(get_db)):
     item = db.query(models.Item).filter(models.Item.id == item_id).first()
