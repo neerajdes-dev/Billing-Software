@@ -33,6 +33,11 @@ class ItemCreate(BaseModel):
     sale_price: float
     gst_percent: float = 0
     stock: int
+    minimum_stock: int = 5
+    batch_number: str | None = None
+    manufacturing_date: date | None = None
+    expiry_date: date | None = None
+    expiry_alert_days: int = 30
 class ItemUpdate(ItemCreate):
     pass
 class ItemImport(BaseModel):
@@ -45,6 +50,11 @@ class BulkItemUpdateRow(BaseModel):
     mrp: float | None = None
     sale_price: float | None = None
     gst_percent: float | None = None
+    minimum_stock: int | None = None
+    batch_number: str | None = None
+    manufacturing_date: date | None = None
+    expiry_date: date | None = None
+    expiry_alert_days: int | None = None
     stock_adjustment: int = 0
     adjustment_reason: str = "Bulk update"
 class BulkItemUpdate(BaseModel):

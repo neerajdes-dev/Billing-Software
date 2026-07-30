@@ -23,6 +23,8 @@ import AddBoxRoundedIcon from "@mui/icons-material/AddBoxRounded";
 import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
 import TrendingUpRoundedIcon from "@mui/icons-material/TrendingUpRounded";
 import TrendingDownRoundedIcon from "@mui/icons-material/TrendingDownRounded";
+import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
+import EventBusyRoundedIcon from "@mui/icons-material/EventBusyRounded";
 import AppLayout from "../components/AppLayout";
 import PageHeader from "../components/PageHeader";
 import {
@@ -43,6 +45,8 @@ const money = (value) => new Intl.NumberFormat("en-IN", {
 const EMPTY_FORM = {
   item_name: "", barcode: "", purchase_price: "", mrp: "",
   sale_price: "", gst_percent: "0", stock: "0",
+  minimum_stock: "5", batch_number: "", manufacturing_date: "",
+  expiry_date: "", expiry_alert_days: "30",
 };
 
 const numberValue = (value) => {
@@ -136,6 +140,12 @@ const normalizeImportRow = (row) => {
     "available_stock"
   );
 
+  const minimumStock = pick("minimum_stock", "min_stock", "reorder_level", "reorder_qty");
+  const batchNumber = pick("batch_number", "batch_no", "batch", "lot_number");
+  const manufacturingDate = pick("manufacturing_date", "mfg_date", "manufacture_date");
+  const expiryDate = pick("expiry_date", "expiry", "expiration_date", "best_before");
+  const expiryAlertDays = pick("expiry_alert_days", "alert_days", "expiry_warning_days");
+
   const cleanNumber = (value) =>
     numberValue(
       String(value ?? "")
@@ -156,6 +166,11 @@ const normalizeImportRow = (row) => {
     sale_price: parsedSalePrice,
     gst_percent: cleanNumber(gst),
     stock: cleanNumber(stock),
+    minimum_stock: minimumStock === "" ? 5 : cleanNumber(minimumStock),
+    batch_number: String(batchNumber || "").trim(),
+    manufacturing_date: String(manufacturingDate || "").trim() || null,
+    expiry_date: String(expiryDate || "").trim() || null,
+    expiry_alert_days: expiryAlertDays === "" ? 30 : cleanNumber(expiryAlertDays),
   };
 };
 
@@ -165,8 +180,8 @@ const SAMPLE_HEADERS = [
   "purchase_price",
   "mrp",
   "sale_price",
-  "gst_percent",
-  "stock",
+  "gst_percent", "stock", "minimum_stock", "batch_number",
+  "manufacturing_date", "expiry_date", "expiry_alert_days",
 ];
 
 const SAMPLE_ROW = {
@@ -175,8 +190,9 @@ const SAMPLE_ROW = {
   purchase_price: 100,
   mrp: 150,
   sale_price: 140,
-  gst_percent: 18,
-  stock: 50,
+  gst_percent: 18, stock: 50, minimum_stock: 10,
+  batch_number: "BATCH-001", manufacturing_date: "2026-01-01",
+  expiry_date: "2027-01-01", expiry_alert_days: 30,
 };
 
 
@@ -225,11 +241,25 @@ const resolveAutomaticReason = (row) => {
   return changedFields.length === 1 ? changedFields[0] : "";
 };
 
-const stockStatus = (stock) => {
-  const value = Number(stock || 0);
-  if (value <= 0) return { label: "Out of stock", color: "error" };
-  if (value <= 5) return { label: "Low stock", color: "warning" };
-  return { label: "In stock", color: "success" };
+const stockStatus = (item) => {
+  const stock = Number(item?.stock || 0);
+  const minimumStock = Number(item?.minimum_stock || 0);
+  if (stock <= 0) return { label: "Out of Stock", color: "error" };
+  if (stock <= minimumStock) return { label: "Low Stock", color: "warning" };
+  return { label: "Healthy", color: "success" };
+};
+
+const expiryStatus = (item) => {
+  if (!item?.expiry_date) return { label: "Not Applicable", color: "default", daysRemaining: null };
+  const expiry = new Date(`${item.expiry_date}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const daysRemaining = Math.ceil((expiry - today) / 86400000);
+  if (daysRemaining < 0) return { label: "Expired", color: "error", daysRemaining };
+  if (daysRemaining <= Number(item.expiry_alert_days || 30)) {
+    return { label: "Expiring Soon", color: "warning", daysRemaining };
+  }
+  return { label: "Safe", color: "success", daysRemaining };
 };
 
 export default function Items() {
@@ -280,11 +310,17 @@ export default function Items() {
   const filtered = useMemo(() => items.filter((item) => {
     const term = search.trim().toLowerCase();
     const stock = Number(item.stock || 0);
-    const matchesSearch = !term || `${item.item_name} ${item.barcode}`.toLowerCase().includes(term);
-    const matchesFilter = filter === "all" ||
-      (filter === "in" && stock > 5) ||
-      (filter === "low" && stock > 0 && stock <= 5) ||
-      (filter === "out" && stock <= 0);
+    const minimumStock = Number(item.minimum_stock || 0);
+    const expiry = expiryStatus(item);
+    const matchesSearch = !term || `${item.item_name} ${item.barcode} ${item.batch_number || ""}`.toLowerCase().includes(term);
+    const matchesFilter =
+      filter === "all" ||
+      (filter === "healthy" && stock > minimumStock) ||
+      (filter === "low" && stock > 0 && stock <= minimumStock) ||
+      (filter === "out" && stock <= 0) ||
+      (filter === "expired" && expiry.label === "Expired") ||
+      (filter === "expiring" && expiry.label === "Expiring Soon") ||
+      (filter === "safe" && expiry.label === "Safe");
     return matchesSearch && matchesFilter;
   }), [items, search, filter]);
 
@@ -292,8 +328,10 @@ export default function Items() {
     products: items.length,
     totalStock: items.reduce((sum, item) => sum + Number(item.stock || 0), 0),
     inventoryValue: items.reduce((sum, item) => sum + Number(item.purchase_price || 0) * Number(item.stock || 0), 0),
-    lowStock: items.filter((item) => Number(item.stock || 0) > 0 && Number(item.stock || 0) <= 5).length,
+    lowStock: items.filter((item) => Number(item.stock || 0) > 0 && Number(item.stock || 0) <= Number(item.minimum_stock || 0)).length,
     outOfStock: items.filter((item) => Number(item.stock || 0) <= 0).length,
+    expired: items.filter((item) => expiryStatus(item).label === "Expired").length,
+    expiringSoon: items.filter((item) => expiryStatus(item).label === "Expiring Soon").length,
   }), [items]);
 
   const openAdd = () => {
@@ -312,6 +350,11 @@ export default function Items() {
       sale_price: item.sale_price ?? "",
       gst_percent: item.gst_percent ?? "0",
       stock: item.stock ?? "0",
+      minimum_stock: item.minimum_stock ?? "5",
+      batch_number: item.batch_number ?? "",
+      manufacturing_date: item.manufacturing_date ?? "",
+      expiry_date: item.expiry_date ?? "",
+      expiry_alert_days: item.expiry_alert_days ?? "30",
     });
     setDialogOpen(true);
   };
@@ -322,12 +365,19 @@ export default function Items() {
     const sale = numberValue(form.sale_price);
     const gst = numberValue(form.gst_percent);
     const stock = numberValue(form.stock);
+    const minimumStock = numberValue(form.minimum_stock);
+    const expiryAlertDays = numberValue(form.expiry_alert_days);
     if (!form.item_name.trim()) return "Item name is required.";
     if (!form.barcode.trim()) return "Barcode is required.";
-    if ([purchase, mrp, sale, gst, stock].some((value) => value < 0)) return "Negative values are not allowed.";
+    if ([purchase, mrp, sale, gst, stock, minimumStock, expiryAlertDays].some((value) => value < 0)) return "Negative values are not allowed.";
     if (sale > mrp) return "Sale price cannot exceed MRP.";
     if (purchase > sale) return "Purchase price cannot exceed sale price.";
     if (!Number.isInteger(stock)) return "Stock must be a whole number.";
+    if (!Number.isInteger(minimumStock)) return "Minimum stock must be a whole number.";
+    if (!Number.isInteger(expiryAlertDays)) return "Expiry alert days must be a whole number.";
+    if (form.manufacturing_date && form.expiry_date && new Date(form.expiry_date) < new Date(form.manufacturing_date)) {
+      return "Expiry date cannot be before manufacturing date.";
+    }
     return "";
   };
 
@@ -336,6 +386,11 @@ export default function Items() {
     purchase_price: numberValue(form.purchase_price), mrp: numberValue(form.mrp),
     sale_price: numberValue(form.sale_price), gst_percent: numberValue(form.gst_percent),
     stock: numberValue(form.stock),
+    minimum_stock: numberValue(form.minimum_stock),
+    batch_number: form.batch_number.trim() || null,
+    manufacturing_date: form.manufacturing_date || null,
+    expiry_date: form.expiry_date || null,
+    expiry_alert_days: numberValue(form.expiry_alert_days),
   });
 
   const save = async () => {
@@ -460,10 +515,18 @@ export default function Items() {
         throw new Error(
           `No valid rows found. Item Name and Barcode are required. ` +
           `Detected columns: ${detectedHeaders || "none"}. ` +
-          `Supported examples: Item Name, Barcode, Purchase Price, MRP, Sale Price, GST %, Stock.`
+          `Supported examples: Item Name, Barcode, Purchase Price, MRP, Sale Price, GST %, Stock, Minimum Stock, Batch No, Mfg Date, Expiry Date.`
         );
       }
-      const invalid = normalized.find((row) => row.purchase_price < 0 || row.mrp < 0 || row.sale_price < 0 || row.gst_percent < 0 || row.stock < 0 || row.sale_price > row.mrp || row.purchase_price > row.sale_price || !Number.isInteger(row.stock));
+      const invalid = normalized.find((row) =>
+        row.purchase_price < 0 || row.mrp < 0 || row.sale_price < 0 ||
+        row.gst_percent < 0 || row.stock < 0 || row.minimum_stock < 0 ||
+        row.expiry_alert_days < 0 || row.sale_price > row.mrp ||
+        row.purchase_price > row.sale_price || !Number.isInteger(row.stock) ||
+        !Number.isInteger(row.minimum_stock) || !Number.isInteger(row.expiry_alert_days) ||
+        (row.manufacturing_date && row.expiry_date &&
+          new Date(row.expiry_date) < new Date(row.manufacturing_date))
+      );
       if (invalid) throw new Error(`Invalid pricing or stock for ${invalid.item_name}.`);
       const result = await importItems(normalized);
       await load(true);
@@ -491,6 +554,11 @@ export default function Items() {
         original_mrp: Number(item.mrp || 0),
         original_sale_price: Number(item.sale_price || 0),
         original_gst_percent: Number(item.gst_percent || 0),
+        minimum_stock: Number(item.minimum_stock ?? 5),
+        batch_number: item.batch_number ?? "",
+        manufacturing_date: item.manufacturing_date ?? "",
+        expiry_date: item.expiry_date ?? "",
+        expiry_alert_days: Number(item.expiry_alert_days ?? 30),
         current_stock: Number(item.stock || 0),
         stock_adjustment: 0,
         adjustment_reason: "",
@@ -506,7 +574,7 @@ export default function Items() {
       "purchase_price",
       "mrp",
       "sale_price",
-      "gst_percent",
+      "gst_percent", "minimum_stock", "expiry_alert_days",
       "stock_adjustment",
     ];
 
@@ -516,6 +584,9 @@ export default function Items() {
       barcode: String(newRow.barcode || "").trim(),
       adjustment_reason: String(newRow.adjustment_reason || ""),
       custom_reason: String(newRow.custom_reason || ""),
+      batch_number: String(newRow.batch_number || ""),
+      manufacturing_date: String(newRow.manufacturing_date || ""),
+      expiry_date: String(newRow.expiry_date || ""),
     };
 
     numericFields.forEach((field) => {
@@ -584,10 +655,12 @@ export default function Items() {
       const mrp = numberValue(row.mrp);
       const sale = numberValue(row.sale_price);
       const gst = numberValue(row.gst_percent);
+      const minimumStock = numberValue(row.minimum_stock);
+      const expiryAlertDays = numberValue(row.expiry_alert_days);
       const adjustment = numberValue(row.stock_adjustment);
       const resultingStock = Number(row.current_stock || 0) + adjustment;
 
-      if ([purchase, mrp, sale, gst].some((value) => value < 0)) {
+      if ([purchase, mrp, sale, gst, minimumStock, expiryAlertDays].some((value) => value < 0)) {
         return `Negative pricing or GST is not allowed for ${row.item_name}.`;
       }
 
@@ -599,6 +672,15 @@ export default function Items() {
         return `Sale price cannot exceed MRP for ${row.item_name}.`;
       }
 
+      if (!Number.isInteger(minimumStock)) {
+        return `Minimum stock must be a whole number for ${row.item_name}.`;
+      }
+      if (!Number.isInteger(expiryAlertDays)) {
+        return `Expiry alert days must be a whole number for ${row.item_name}.`;
+      }
+      if (row.manufacturing_date && row.expiry_date && new Date(row.expiry_date) < new Date(row.manufacturing_date)) {
+        return `Expiry date cannot be before manufacturing date for ${row.item_name}.`;
+      }
       if (!Number.isInteger(adjustment)) {
         return `Stock adjustment must be a whole number for ${row.item_name}.`;
       }
@@ -655,6 +737,11 @@ export default function Items() {
         mrp: numberValue(row.mrp),
         sale_price: numberValue(row.sale_price),
         gst_percent: numberValue(row.gst_percent),
+        minimum_stock: numberValue(row.minimum_stock),
+        batch_number: String(row.batch_number || "").trim() || null,
+        manufacturing_date: row.manufacturing_date || null,
+        expiry_date: row.expiry_date || null,
+        expiry_alert_days: numberValue(row.expiry_alert_days),
         stock_adjustment: numberValue(row.stock_adjustment),
         adjustment_reason:
           row.adjustment_reason === "Other"
@@ -687,7 +774,14 @@ export default function Items() {
       sale_price: Number(item.sale_price || 0),
       gst_percent: Number(item.gst_percent || 0),
       stock: Number(item.stock || 0),
-      stock_status: stockStatus(item.stock).label,
+      minimum_stock: Number(item.minimum_stock || 0),
+      stock_status: stockStatus(item).label,
+      batch_number: item.batch_number || "",
+      manufacturing_date: item.manufacturing_date || "",
+      expiry_date: item.expiry_date || "",
+      expiry_alert_days: Number(item.expiry_alert_days || 30),
+      days_remaining: expiryStatus(item).daysRemaining ?? "",
+      expiry_status: expiryStatus(item).label,
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(exportRows);
@@ -738,6 +832,11 @@ export default function Items() {
       minWidth: 90,
       editable: true,
     },
+    { field: "minimum_stock", headerName: "Minimum Stock", type: "number", minWidth: 130, editable: true },
+    { field: "batch_number", headerName: "Batch No.", minWidth: 130, editable: true },
+    { field: "manufacturing_date", headerName: "Mfg Date", minWidth: 135, editable: true },
+    { field: "expiry_date", headerName: "Expiry Date", minWidth: 135, editable: true },
+    { field: "expiry_alert_days", headerName: "Alert Days", type: "number", minWidth: 110, editable: true },
     {
       field: "current_stock",
       headerName: "Current Stock",
@@ -1132,7 +1231,7 @@ export default function Items() {
       {cards.map(([label, value, helper]) => <Grid key={label} size={{ xs: 12, sm: 6, lg: 2.4 }}><Card sx={{ height: "100%" }}><CardContent><Stack direction="row" spacing={1.25} alignItems="center"><Box sx={{ width: 42, height: 42, borderRadius: 2.5, bgcolor: "primary.light", color: "primary.main", display: "grid", placeItems: "center" }}><Inventory2RoundedIcon fontSize="small" /></Box><Box minWidth={0}><Typography variant="body2" color="text.secondary">{label}</Typography><Typography variant="h6" fontWeight={800} noWrap>{value}</Typography></Box></Stack><Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1.5 }}>{helper}</Typography></CardContent></Card></Grid>)}
     </Grid>
 
-    <Card><CardContent sx={{ p: 0 }}><Box sx={{ p: 2.5, display: "flex", gap: 1.5, justifyContent: "space-between", flexDirection: { xs: "column", md: "row" }, borderBottom: 1, borderColor: "divider" }}><Box><Typography variant="h6">Inventory catalogue</Typography><Typography variant="body2" color="text.secondary">Search, filter, edit and maintain inventory records.</Typography></Box><Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}><TextField size="small" placeholder="Search item or barcode" value={search} onChange={(e) => setSearch(e.target.value)} sx={{ minWidth: { sm: 280 } }} InputProps={{ startAdornment: <InputAdornment position="start"><SearchRoundedIcon fontSize="small" /></InputAdornment> }} /><FormControl size="small" sx={{ minWidth: 160 }}><InputLabel>Stock Status</InputLabel><Select label="Stock Status" value={filter} onChange={(e) => setFilter(e.target.value)}><MenuItem value="all">All Stock</MenuItem><MenuItem value="in">In Stock</MenuItem><MenuItem value="low">Low Stock</MenuItem><MenuItem value="out">Out of Stock</MenuItem></Select></FormControl></Stack></Box><DataGrid autoHeight rows={filtered} columns={columns} loading={loading} disableRowSelectionOnClick pageSizeOptions={[10, 25, 50, 100]} initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }} getRowHeight={() => "auto"} sx={{ border: 0, "& .MuiDataGrid-columnHeaders": { bgcolor: "background.default" }, "& .MuiDataGrid-cell": { py: 1 } }} /></CardContent></Card>
+    <Card><CardContent sx={{ p: 0 }}><Box sx={{ p: 2.5, display: "flex", gap: 1.5, justifyContent: "space-between", flexDirection: { xs: "column", md: "row" }, borderBottom: 1, borderColor: "divider" }}><Box><Typography variant="h6">Inventory catalogue</Typography><Typography variant="body2" color="text.secondary">Search, filter, edit and maintain inventory records.</Typography></Box><Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}><TextField size="small" placeholder="Search item or barcode" value={search} onChange={(e) => setSearch(e.target.value)} sx={{ minWidth: { sm: 280 } }} InputProps={{ startAdornment: <InputAdornment position="start"><SearchRoundedIcon fontSize="small" /></InputAdornment> }} /><FormControl size="small" sx={{ minWidth: 160 }}><InputLabel>Stock Status</InputLabel><Select label="Stock Status" value={filter} onChange={(e) => setFilter(e.target.value)}><MenuItem value="all">All Items</MenuItem><MenuItem value="healthy">Healthy Stock</MenuItem><MenuItem value="low">Low Stock</MenuItem><MenuItem value="out">Out of Stock</MenuItem><MenuItem value="expired">Expired</MenuItem><MenuItem value="expiring">Expiring Soon</MenuItem><MenuItem value="safe">Safe Expiry</MenuItem></Select></FormControl></Stack></Box><DataGrid autoHeight rows={filtered} columns={columns} loading={loading} disableRowSelectionOnClick pageSizeOptions={[10, 25, 50, 100]} initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }} getRowHeight={() => "auto"} sx={{ border: 0, "& .MuiDataGrid-columnHeaders": { bgcolor: "background.default" }, "& .MuiDataGrid-cell": { py: 1 } }} /></CardContent></Card>
 
 
 
@@ -1448,7 +1547,10 @@ export default function Items() {
     <Dialog open={dialogOpen} onClose={() => !saving && setDialogOpen(false)} fullWidth maxWidth="md"><DialogTitle>{editing ? "Edit Inventory Item" : "Add Inventory Item"}</DialogTitle><DialogContent dividers><Grid container spacing={2} sx={{ pt: 0.5 }}>
       <Grid size={{ xs: 12, md: 8 }}><TextField fullWidth required label="Item Name" value={form.item_name} onChange={(e) => setForm({ ...form, item_name: e.target.value })} autoFocus /></Grid>
       <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth required label="Barcode" value={form.barcode} onChange={(e) => setForm({ ...form, barcode: e.target.value })} /></Grid>
-      {[['Purchase Price','purchase_price'],['MRP','mrp'],['Sale Price','sale_price'],['GST %','gst_percent'],[editing ? 'Current Stock' : 'Opening Stock','stock']].map(([label, key]) => <Grid key={key} size={{ xs: 12, sm: 6, md: key === 'stock' || key === 'gst_percent' ? 6 : 4 }}><TextField fullWidth type="number" label={label} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} inputProps={{ min: 0, step: key === 'stock' ? 1 : '0.01' }} /></Grid>)}
+      {[['Purchase Price','purchase_price'],['MRP','mrp'],['Sale Price','sale_price'],['GST %','gst_percent'],[editing ? 'Current Stock' : 'Opening Stock','stock'],['Minimum Stock','minimum_stock'],['Expiry Alert Days','expiry_alert_days']].map(([label, key]) => <Grid key={key} size={{ xs: 12, sm: 6, md: 4 }}><TextField fullWidth type="number" label={label} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} inputProps={{ min: 0, step: ['stock','minimum_stock','expiry_alert_days'].includes(key) ? 1 : '0.01' }} /></Grid>)}
+      <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Batch Number" value={form.batch_number} onChange={(e) => setForm({ ...form, batch_number: e.target.value })} /></Grid>
+      <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Manufacturing Date" type="date" value={form.manufacturing_date} onChange={(e) => setForm({ ...form, manufacturing_date: e.target.value })} InputLabelProps={{ shrink: true }} /></Grid>
+      <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Expiry Date" type="date" value={form.expiry_date} onChange={(e) => setForm({ ...form, expiry_date: e.target.value })} InputLabelProps={{ shrink: true }} /></Grid>
     </Grid></DialogContent><DialogActions sx={{ px: 3, py: 2 }}><Button onClick={() => setDialogOpen(false)} disabled={saving}>Cancel</Button><Button variant="contained" onClick={save} disabled={saving}>{saving ? "Saving..." : editing ? "Update Item" : "Save Item"}</Button></DialogActions></Dialog>
   </AppLayout>;
 }

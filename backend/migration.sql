@@ -1,0 +1,6 @@
+-- Run once in Neon/PostgreSQL before deploying Phase 3.1.
+ALTER TABLE items ADD COLUMN IF NOT EXISTS minimum_stock INTEGER NOT NULL DEFAULT 5;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS batch_number VARCHAR;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS manufacturing_date DATE;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS expiry_date DATE;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS expiry_alert_days INTEGER NOT NULL DEFAULT 30;

@@ -102,12 +102,16 @@ def validate_item_values(
     sale_price: float,
     gst_percent: float,
     stock: int,
+    minimum_stock: int = 5,
+    expiry_alert_days: int = 30,
+    manufacturing_date=None,
+    expiry_date=None,
 ):
     if not str(item_name or "").strip():
         raise HTTPException(status_code=400, detail="Item name is required")
     if not str(barcode or "").strip():
         raise HTTPException(status_code=400, detail="Barcode is required")
-    values = [purchase_price, mrp, sale_price, gst_percent, stock]
+    values = [purchase_price, mrp, sale_price, gst_percent, stock, minimum_stock, expiry_alert_days]
     if any(to_float(value) < 0 for value in values):
         raise HTTPException(status_code=400, detail="Negative values are not allowed")
     if to_float(sale_price) > to_float(mrp):
@@ -116,6 +120,12 @@ def validate_item_values(
         raise HTTPException(status_code=400, detail="Purchase price cannot exceed sale price")
     if int(stock) != stock:
         raise HTTPException(status_code=400, detail="Stock must be a whole number")
+    if int(minimum_stock) != minimum_stock:
+        raise HTTPException(status_code=400, detail="Minimum stock must be a whole number")
+    if int(expiry_alert_days) != expiry_alert_days:
+        raise HTTPException(status_code=400, detail="Expiry alert days must be a whole number")
+    if manufacturing_date and expiry_date and expiry_date < manufacturing_date:
+        raise HTTPException(status_code=400, detail="Expiry date cannot be before manufacturing date")
 
 
 @app.get("/")
@@ -239,6 +249,8 @@ def add_item(data: schemas.ItemCreate, db: Session = Depends(get_db)):
     validate_item_values(
         data.item_name, data.barcode, data.purchase_price, data.mrp,
         data.sale_price, data.gst_percent, data.stock,
+        data.minimum_stock, data.expiry_alert_days,
+        data.manufacturing_date, data.expiry_date,
     )
     normalized_barcode = data.barcode.strip()
     existing = db.query(models.Item).filter(models.Item.barcode == normalized_barcode).first()
@@ -257,6 +269,51 @@ def add_item(data: schemas.ItemCreate, db: Session = Depends(get_db)):
 @app.get("/items")
 def get_items(db: Session = Depends(get_db)):
     return db.query(models.Item).order_by(models.Item.id.desc()).all()
+
+
+
+@app.get("/items/inventory-summary")
+def get_inventory_summary(db: Session = Depends(get_db)):
+    today = date.today()
+    items = db.query(models.Item).all()
+
+    healthy_stock = 0
+    low_stock = 0
+    out_of_stock = 0
+    expired = 0
+    expiring_soon = 0
+
+    for item in items:
+        stock = int(item.stock or 0)
+        minimum_stock = int(item.minimum_stock or 0)
+
+        if stock <= 0:
+            out_of_stock += 1
+        elif stock <= minimum_stock:
+            low_stock += 1
+        else:
+            healthy_stock += 1
+
+        if item.expiry_date:
+            days_remaining = (item.expiry_date - today).days
+            if days_remaining < 0:
+                expired += 1
+            elif days_remaining <= int(item.expiry_alert_days or 30):
+                expiring_soon += 1
+
+    return {
+        "total_items": len(items),
+        "healthy_stock": healthy_stock,
+        "low_stock": low_stock,
+        "out_of_stock": out_of_stock,
+        "expired": expired,
+        "expiring_soon": expiring_soon,
+        "total_stock_quantity": sum(int(item.stock or 0) for item in items),
+        "total_inventory_value": sum(
+            float(item.purchase_price or 0) * int(item.stock or 0)
+            for item in items
+        ),
+    }
 
 
 @app.get("/items/barcode/{barcode}")
@@ -1036,6 +1093,8 @@ def update_item(item_id: int, data: schemas.ItemUpdate, db: Session = Depends(ge
     validate_item_values(
         data.item_name, data.barcode, data.purchase_price, data.mrp,
         data.sale_price, data.gst_percent, data.stock,
+        data.minimum_stock, data.expiry_alert_days,
+        data.manufacturing_date, data.expiry_date,
     )
     normalized_barcode = data.barcode.strip()
     duplicate = (

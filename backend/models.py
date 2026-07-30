@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -46,6 +46,11 @@ class Item(Base):
     sale_price = Column(Float, nullable=False)
     gst_percent = Column(Float, default=0)
     stock = Column(Integer, default=0)
+    minimum_stock = Column(Integer, nullable=False, default=5)
+    batch_number = Column(String)
+    manufacturing_date = Column(Date)
+    expiry_date = Column(Date)
+    expiry_alert_days = Column(Integer, nullable=False, default=30)
     created_at = Column(DateTime, default=datetime.now)
 
 class StockAdjustment(Base):
