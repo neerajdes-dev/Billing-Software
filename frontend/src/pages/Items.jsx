@@ -1109,7 +1109,24 @@ export default function Items() {
     { field: "sale_price", headerName: "Sale Price", minWidth: 130, align: "right", headerAlign: "right", valueFormatter: (value) => money(value) },
     { field: "gst_percent", headerName: "GST", minWidth: 85, align: "center", headerAlign: "center", valueFormatter: (value) => `${Number(value || 0)}%` },
     { field: "stock", headerName: "Stock", minWidth: 85, align: "center", headerAlign: "center" },
-    { field: "status", headerName: "Status", minWidth: 125, sortable: false, renderCell: ({ row }) => { const status = stockStatus(row.stock); return <Chip size="small" label={status.label} color={status.color} variant="outlined" />; } },
+    {
+  field: "status",
+  headerName: "Status",
+  minWidth: 125,
+  sortable: false,
+  renderCell: ({ row }) => {
+    const status = stockStatus(row);
+
+    return (
+      <Chip
+        size="small"
+        label={status.label}
+        color={status.color}
+        variant="outlined"
+      />
+    );
+  },
+},
     {
       field: "actions",
       headerName: "Actions",
