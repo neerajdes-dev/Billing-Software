@@ -43,10 +43,19 @@ const money = (value) => new Intl.NumberFormat("en-IN", {
 }).format(Number(value || 0));
 
 const EMPTY_FORM = {
-  item_name: "", barcode: "", purchase_price: "", mrp: "",
-  sale_price: "", gst_percent: "0", stock: "0",
-  minimum_stock: "5", batch_number: "", manufacturing_date: "",
-  expiry_date: "", expiry_alert_days: "30",
+  item_name: "",
+  barcode: "",
+  purchase_price: "",
+  mrp: "",
+  sale_price: "",
+  gst_percentage: 0,
+  stock: 0,
+
+  minimum_stock: 5,
+  expiry_alert_days: 30,
+  batch_number: "",
+  manufacturing_date: "",
+  expiry_date: "",
 };
 
 const numberValue = (value) => {
@@ -1549,8 +1558,32 @@ export default function Items() {
       <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth required label="Barcode" value={form.barcode} onChange={(e) => setForm({ ...form, barcode: e.target.value })} /></Grid>
       {[['Purchase Price','purchase_price'],['MRP','mrp'],['Sale Price','sale_price'],['GST %','gst_percent'],[editing ? 'Current Stock' : 'Opening Stock','stock'],['Minimum Stock','minimum_stock'],['Expiry Alert Days','expiry_alert_days']].map(([label, key]) => <Grid key={key} size={{ xs: 12, sm: 6, md: 4 }}><TextField fullWidth type="number" label={label} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} inputProps={{ min: 0, step: ['stock','minimum_stock','expiry_alert_days'].includes(key) ? 1 : '0.01' }} /></Grid>)}
       <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Batch Number" value={form.batch_number} onChange={(e) => setForm({ ...form, batch_number: e.target.value })} /></Grid>
-      <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Manufacturing Date" type="date" value={form.manufacturing_date} onChange={(e) => setForm({ ...form, manufacturing_date: e.target.value })} InputLabelProps={{ shrink: true }} /></Grid>
-      <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Expiry Date" type="date" value={form.expiry_date} onChange={(e) => setForm({ ...form, expiry_date: e.target.value })} InputLabelProps={{ shrink: true }} /></Grid>
+      <Grid size={{ xs: 12, md: 4 }}><TextField
+  fullWidth
+  label="Manufacturing Date"
+  type="date"
+  name="manufacturing_date"
+  value={formData.manufacturing_date || ""}
+  onChange={handleChange}
+  slotProps={{
+    inputLabel: {
+      shrink: true,
+    },
+  }}
+/></Grid>
+      <Grid size={{ xs: 12, md: 4 }}><TextField
+  fullWidth
+  label="Expiry Date"
+  type="date"
+  name="expiry_date"
+  value={formData.expiry_date || ""}
+  onChange={handleChange}
+  slotProps={{
+    inputLabel: {
+      shrink: true,
+    },
+  }}
+/></Grid>
     </Grid></DialogContent><DialogActions sx={{ px: 3, py: 2 }}><Button onClick={() => setDialogOpen(false)} disabled={saving}>Cancel</Button><Button variant="contained" onClick={save} disabled={saving}>{saving ? "Saving..." : editing ? "Update Item" : "Save Item"}</Button></DialogActions></Dialog>
   </AppLayout>;
 }
