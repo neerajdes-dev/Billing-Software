@@ -1,5 +1,5 @@
 const rawApiUrl =
-  import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+  import.meta.env.VITE_API_URL || "https://billing-software-fy50.onrender.com";
 
 const API_URL = rawApiUrl.replace(/\/+$/, "");
 
@@ -215,6 +215,19 @@ export const bulkUpdateItems = (items) =>
     method: "PUT",
     body: JSON.stringify({ items }),
   });
+// ======================================
+// Stock Adjustment APIs
+// ======================================
+
+export const addStockAdjustment = (itemId, data) =>
+  request(`/items/${itemId}/stock-adjustments`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+
+export const getStockAdjustmentHistory = (itemId) =>
+  request(`/items/${itemId}/stock-adjustments`);
+
 
 export const getCustomerCreditLedger = () =>
   request("/customers/credit-ledger");
