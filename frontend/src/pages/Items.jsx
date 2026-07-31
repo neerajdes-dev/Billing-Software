@@ -48,7 +48,7 @@ const EMPTY_FORM = {
   purchase_price: "",
   mrp: "",
   sale_price: "",
-  gst_percentage: 0,
+ gst_percent: 0,
   stock: 0,
 
   minimum_stock: 5,
@@ -1563,8 +1563,8 @@ export default function Items() {
   label="Manufacturing Date"
   type="date"
   name="manufacturing_date"
-  value={formData.manufacturing_date || ""}
-  onChange={handleChange}
+  value={form.manufacturing_date || ""}
+  onChange={setForm}
   slotProps={{
     inputLabel: {
       shrink: true,
@@ -1576,8 +1576,8 @@ export default function Items() {
   label="Expiry Date"
   type="date"
   name="expiry_date"
-  value={formData.expiry_date || ""}
-  onChange={handleChange}
+  value={form.expiry_date || ""}
+  onChange={setForm}
   slotProps={{
     inputLabel: {
       shrink: true,
