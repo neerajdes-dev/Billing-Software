@@ -1,3 +1,5 @@
+import { QRCodeSVG } from "qrcode.react";
+import { buildUpiPaymentUrl, DEFAULT_UPI_SETTINGS } from "../utils/upi";
 import {
   Box,
   Divider,
@@ -53,6 +55,32 @@ function InvoicePrint({
         "/resolvent-logo.jpg"
       : "/resolvent-logo.jpg";
 
+  const upiSettings =
+    typeof window !== "undefined"
+      ? {
+          ...DEFAULT_UPI_SETTINGS,
+          ...(JSON.parse(
+            localStorage.getItem("billing_upi_settings") || "{}"
+          ) || {}),
+        }
+      : DEFAULT_UPI_SETTINGS;
+
+  const shouldShowQr =
+    upiSettings.enabled &&
+    printSettings.show_payment_qr !== false &&
+    (invoice.payment_mode !== "Cash" || upiSettings.show_for_cash);
+
+  const upiUrl = shouldShowQr
+    ? buildUpiPaymentUrl({
+        settings: upiSettings,
+        amount: invoice.balance > 0
+          ? invoice.balance
+          : invoice.total_amount,
+        invoiceNumber: invoice.invoice_number,
+        customerName: customer.customer_name,
+      })
+    : "";
+
   const subtotal = Number(invoice.subtotal || 0);
   const gstAmount = Number(invoice.gst_amount || 0);
   const discount = Number(invoice.discount || 0);
@@ -94,7 +122,15 @@ function InvoicePrint({
           alignItems: "flex-start",
           gap: 2,
           mb: isThermal ? 1 : 2,
-          textAlign: isThermal ? "center" : "left",
+          textAlign: isThermal
+            ? "center"
+            : printSettings.header_alignment || "left",
+          justifyContent:
+            printSettings.header_alignment === "right"
+              ? "flex-end"
+              : printSettings.header_alignment === "center"
+              ? "center"
+              : "flex-start",
         }}
       >
         <Box
@@ -110,8 +146,12 @@ function InvoicePrint({
               src={businessLogo}
               alt="Business Logo"
               sx={{
-                width: isThermal ? 58 : 92,
-                height: isThermal ? 42 : 64,
+                width: isThermal
+                  ? Math.min(Number(printSettings.logo_width || 90), 90)
+                  : Number(printSettings.logo_width || 90),
+                height: isThermal
+                  ? Math.min(Number(printSettings.logo_height || 60), 60)
+                  : Number(printSettings.logo_height || 60),
                 objectFit: "contain",
                 mb: isThermal ? 0.5 : 0,
               }}
@@ -460,6 +500,53 @@ function InvoicePrint({
         </Box>
       </Box>
 
+      {upiUrl && upiSettings.qr_position === "below_total" && (
+        <Stack
+          alignItems="center"
+          spacing={0.5}
+          sx={{ mt: isThermal ? 1.5 : 2.5 }}
+        >
+          <Typography
+            sx={{
+              fontSize: isThermal ? 10 : 12,
+              fontWeight: 900,
+            }}
+          >
+            Scan to Pay
+          </Typography>
+
+          <QRCodeSVG
+            value={upiUrl}
+            size={
+              isThermal
+                ? Math.min(Number(upiSettings.qr_size || 150), 135)
+                : Number(upiSettings.qr_size || 150)
+            }
+            level="M"
+            includeMargin
+          />
+
+          <Typography
+            sx={{
+              fontSize: isThermal ? 10 : 12,
+              fontWeight: 900,
+            }}
+          >
+            {money(
+              invoice.balance > 0
+                ? invoice.balance
+                : invoice.total_amount
+            )}
+          </Typography>
+
+          {upiSettings.show_upi_id && (
+            <Typography sx={{ fontSize: isThermal ? 8 : 10 }}>
+              {upiSettings.upi_id}
+            </Typography>
+          )}
+        </Stack>
+      )}
+
       <Box textAlign="center" mt={isThermal ? 1.5 : 4}>
         <Typography
           sx={{
@@ -472,6 +559,29 @@ function InvoicePrint({
         <Typography sx={{ fontSize: isThermal ? 8 : 10 }}>
           Powered by Resolvent IT Services Pvt. Ltd.
         </Typography>
+
+        {upiUrl && upiSettings.qr_position === "footer" && (
+          <Stack alignItems="center" spacing={0.5} sx={{ mt: 1.25 }}>
+            <Typography sx={{ fontSize: isThermal ? 9 : 11, fontWeight: 800 }}>
+              Scan to Pay
+            </Typography>
+            <QRCodeSVG
+              value={upiUrl}
+              size={
+                isThermal
+                  ? Math.min(Number(upiSettings.qr_size || 150), 125)
+                  : Number(upiSettings.qr_size || 150)
+              }
+              level="M"
+              includeMargin
+            />
+            {upiSettings.show_upi_id && (
+              <Typography sx={{ fontSize: isThermal ? 8 : 10 }}>
+                {upiSettings.upi_id}
+              </Typography>
+            )}
+          </Stack>
+        )}
       </Box>
     </Box>
   );

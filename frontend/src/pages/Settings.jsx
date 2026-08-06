@@ -7,9 +7,11 @@ import {
   Card,
   CardContent,
   Checkbox,
+  Divider,
   FormControlLabel,
   Grid,
   MenuItem,
+  Slider,
   Stack,
   Tab,
   Tabs,
@@ -23,25 +25,52 @@ import SaveRoundedIcon from "@mui/icons-material/SaveRounded";
 import PrintRoundedIcon from "@mui/icons-material/PrintRounded";
 import UploadRoundedIcon from "@mui/icons-material/UploadRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
+import PaymentsRoundedIcon from "@mui/icons-material/PaymentsRounded";
+import QrCode2RoundedIcon from "@mui/icons-material/QrCode2Rounded";
 import AppLayout from "../components/AppLayout";
 import PageHeader from "../components/PageHeader";
+import PrintDesignerPreview from "../components/PrintDesignerPreview";
 import {
   getSettings,
   updatePassword,
   updateSettings,
   updateUsername,
 } from "../services/api";
+import {
+  DEFAULT_UPI_SETTINGS,
+  isValidUpiId,
+} from "../utils/upi";
 
 const DEFAULT_PRINT_SETTINGS = {
   layout: "a4",
   thermal_size: "80mm",
   invoice_text_size: "medium",
+  invoice_theme: "professional",
+  header_alignment: "left",
+  logo_position: "left",
+  logo_width: 90,
+  logo_height: 60,
   show_logo: true,
+  show_business_details: true,
+  show_customer_details: true,
   show_barcode: true,
   show_batch_expiry: true,
   show_savings: true,
+  show_payment_qr: true,
+  show_footer: true,
   auto_cut: false,
   footer_message: "Thank you for your business. Visit again.",
+};
+
+const loadJson = (key, fallback) => {
+  try {
+    return {
+      ...fallback,
+      ...(JSON.parse(localStorage.getItem(key)) || {}),
+    };
+  } catch {
+    return fallback;
+  }
 };
 
 export default function Settings() {
@@ -70,18 +99,13 @@ export default function Settings() {
     confirm_password: "",
   });
 
-  const [printSettings, setPrintSettings] = useState(() => {
-    try {
-      return {
-        ...DEFAULT_PRINT_SETTINGS,
-        ...(JSON.parse(
-          localStorage.getItem("billing_print_settings")
-        ) || {}),
-      };
-    } catch {
-      return DEFAULT_PRINT_SETTINGS;
-    }
-  });
+  const [printSettings, setPrintSettings] = useState(() =>
+    loadJson("billing_print_settings", DEFAULT_PRINT_SETTINGS)
+  );
+
+  const [upiSettings, setUpiSettings] = useState(() =>
+    loadJson("billing_upi_settings", DEFAULT_UPI_SETTINGS)
+  );
 
   const logoInputRef = useRef(null);
   const [businessLogo, setBusinessLogo] = useState(
@@ -103,12 +127,23 @@ export default function Settings() {
         });
       })
       .catch((error) =>
-        setMessage({
-          type: "error",
-          text: error.message,
-        })
+        setMessage({ type: "error", text: error.message })
       );
   }, [userId]);
+
+  const updatePrintSetting = (key, value) => {
+    setPrintSettings((current) => ({
+      ...current,
+      [key]: value,
+    }));
+  };
+
+  const updateUpiSetting = (key, value) => {
+    setUpiSettings((current) => ({
+      ...current,
+      [key]: value,
+    }));
+  };
 
   const handleLogoUpload = (event) => {
     const file = event.target.files?.[0];
@@ -143,12 +178,11 @@ export default function Settings() {
       });
     };
 
-    reader.onerror = () => {
+    reader.onerror = () =>
       setMessage({
         type: "error",
         text: "Unable to read the selected logo file.",
       });
-    };
 
     reader.readAsDataURL(file);
     event.target.value = "";
@@ -159,7 +193,7 @@ export default function Settings() {
     setBusinessLogo("/resolvent-logo.jpg");
     setMessage({
       type: "success",
-      text: "Custom logo removed. Default Resolvent logo restored.",
+      text: "Default Resolvent logo restored.",
     });
   };
 
@@ -176,6 +210,50 @@ export default function Settings() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const savePrintSettings = () => {
+    localStorage.setItem(
+      "billing_print_settings",
+      JSON.stringify(printSettings)
+    );
+    setMessage({
+      type: "success",
+      text: "Print designer settings saved successfully.",
+    });
+  };
+
+  const saveUpiSettings = () => {
+    if (
+      upiSettings.enabled &&
+      !isValidUpiId(upiSettings.upi_id)
+    ) {
+      setMessage({
+        type: "warning",
+        text: "Enter a valid UPI ID, for example business@bank.",
+      });
+      return;
+    }
+
+    if (
+      upiSettings.enabled &&
+      !String(upiSettings.payee_name || "").trim()
+    ) {
+      setMessage({
+        type: "warning",
+        text: "Payee name is required when UPI QR is enabled.",
+      });
+      return;
+    }
+
+    localStorage.setItem(
+      "billing_upi_settings",
+      JSON.stringify(upiSettings)
+    );
+    setMessage({
+      type: "success",
+      text: "UPI payment QR settings saved successfully.",
+    });
   };
 
   const saveUsername = async () => {
@@ -235,36 +313,13 @@ export default function Settings() {
     }
   };
 
-  const savePrintSettings = () => {
-    localStorage.setItem(
-      "billing_print_settings",
-      JSON.stringify(printSettings)
-    );
-    setMessage({
-      type: "success",
-      text: "Print settings saved successfully.",
-    });
-  };
-
   const businessPanel = (
     <Grid container spacing={3}>
       <Grid size={{ xs: 12, lg: 8 }}>
         <Card>
           <CardContent sx={{ p: 3 }}>
             <Stack direction="row" spacing={1.5} alignItems="center" mb={3.5}>
-              <Box
-                sx={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 2.5,
-                  bgcolor: "primary.light",
-                  color: "primary.main",
-                  display: "grid",
-                  placeItems: "center",
-                }}
-              >
-                <BusinessRoundedIcon />
-              </Box>
+              <BusinessRoundedIcon color="primary" />
               <Box>
                 <Typography variant="h6">Business profile</Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
@@ -281,34 +336,29 @@ export default function Settings() {
                 borderColor: "divider",
                 borderRadius: 3,
                 display: "flex",
-                flexDirection: { xs: "column", sm: "row" },
-                alignItems: { xs: "flex-start", sm: "center" },
                 gap: 2,
+                alignItems: "center",
+                flexDirection: { xs: "column", sm: "row" },
               }}
             >
               <Avatar
                 variant="rounded"
                 src={businessLogo}
-                alt="Business Logo"
                 sx={{
-                  width: 92,
-                  height: 72,
+                  width: 100,
+                  height: 76,
                   bgcolor: "background.default",
                   border: "1px solid",
                   borderColor: "divider",
-                  "& img": {
-                    objectFit: "contain",
-                    p: 0.5,
-                  },
+                  "& img": { objectFit: "contain", p: 0.5 },
                 }}
               />
 
               <Box sx={{ flex: 1 }}>
                 <Typography fontWeight={800}>Business Logo</Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                  Upload PNG, JPG or WEBP up to 2 MB. The logo will appear on invoices.
+                  Upload PNG, JPG or WEBP up to 2 MB.
                 </Typography>
-
                 <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ mt: 1.5 }}>
                   <Button
                     variant="outlined"
@@ -317,17 +367,14 @@ export default function Settings() {
                   >
                     Upload Logo
                   </Button>
-
                   <Button
                     color="error"
-                    variant="text"
                     startIcon={<DeleteOutlineRoundedIcon />}
                     onClick={removeBusinessLogo}
                   >
                     Restore Default
                   </Button>
                 </Stack>
-
                 <input
                   hidden
                   ref={logoInputRef}
@@ -339,61 +386,26 @@ export default function Settings() {
             </Box>
 
             <Grid container spacing={2.25}>
-              <Grid size={{ xs: 12, md: 6 }}>
-                <TextField
-                  fullWidth
-                  label="Business Name"
-                  value={business.business_name}
-                  onChange={(event) =>
-                    setBusiness({
-                      ...business,
-                      business_name: event.target.value,
-                    })
-                  }
-                />
-              </Grid>
-
-              <Grid size={{ xs: 12, md: 6 }}>
-                <TextField
-                  fullWidth
-                  label="GST Number"
-                  value={business.gst_number}
-                  onChange={(event) =>
-                    setBusiness({
-                      ...business,
-                      gst_number: event.target.value,
-                    })
-                  }
-                />
-              </Grid>
-
-              <Grid size={{ xs: 12, md: 6 }}>
-                <TextField
-                  fullWidth
-                  label="Business Email"
-                  value={business.email}
-                  onChange={(event) =>
-                    setBusiness({
-                      ...business,
-                      email: event.target.value,
-                    })
-                  }
-                />
-              </Grid>
-
-              <Grid size={{ xs: 12, md: 6 }}>
-                <TextField
-                  fullWidth
-                  label="Mobile Number"
-                  value={business.mobile}
-                  onChange={(event) =>
-                    setBusiness({
-                      ...business,
-                      mobile: event.target.value,
-                    })
-                  }
-                />
-              </Grid>
+              {[
+                ["Business Name", "business_name"],
+                ["GST Number", "gst_number"],
+                ["Business Email", "email"],
+                ["Mobile Number", "mobile"],
+              ].map(([label, key]) => (
+                <Grid key={key} size={{ xs: 12, md: 6 }}>
+                  <TextField
+                    fullWidth
+                    label={label}
+                    value={business[key]}
+                    onChange={(event) =>
+                      setBusiness({
+                        ...business,
+                        [key]: event.target.value,
+                      })
+                    }
+                  />
+                </Grid>
+              ))}
 
               <Grid size={{ xs: 12 }}>
                 <TextField
@@ -429,13 +441,9 @@ export default function Settings() {
         <Card>
           <CardContent sx={{ p: 3 }}>
             <Typography variant="h6">Invoice identity</Typography>
-            <Typography variant="body2" color="text.secondary" mt={1}>
-              These details are used on bills, reports and customer statements.
-            </Typography>
-
             <Box
               sx={{
-                mt: 3,
+                mt: 2,
                 p: 2.5,
                 borderRadius: 3,
                 bgcolor: "#F8FAFC",
@@ -454,22 +462,352 @@ export default function Settings() {
                   mb: 1.5,
                 }}
               />
-              <Typography variant="caption" color="text.secondary">
-                BUSINESS NAME
-              </Typography>
-              <Typography fontWeight={800} mt={0.5}>
+              <Typography fontWeight={800}>
                 {business.business_name || "Your Business"}
               </Typography>
-              <Typography variant="body2" color="text.secondary" mt={1}>
-                {business.gst_number || "GST number not configured"}
+              <Typography variant="body2">
+                GSTIN: {business.gst_number || "Not configured"}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
-                {business.mobile || "Mobile not configured"}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                {business.email || "Email not configured"}
-              </Typography>
+              <Typography variant="body2">{business.mobile || "-"}</Typography>
+              <Typography variant="body2">{business.email || "-"}</Typography>
             </Box>
+          </CardContent>
+        </Card>
+      </Grid>
+    </Grid>
+  );
+
+  const designerPanel = (
+    <Grid container spacing={3}>
+      <Grid size={{ xs: 12, lg: 7 }}>
+        <Stack spacing={3}>
+          <Card>
+            <CardContent sx={{ p: 3 }}>
+              <Typography variant="h6">Invoice layout</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 3 }}>
+                Configure paper, theme, alignment and visible invoice sections.
+              </Typography>
+
+              <Grid container spacing={2.25}>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <TextField
+                    fullWidth
+                    select
+                    label="Print Layout"
+                    value={printSettings.layout}
+                    onChange={(e) => updatePrintSetting("layout", e.target.value)}
+                  >
+                    <MenuItem value="a4">A4 Tax Invoice</MenuItem>
+                    <MenuItem value="thermal">Thermal Receipt</MenuItem>
+                  </TextField>
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <TextField
+                    fullWidth
+                    select
+                    label="Thermal Paper"
+                    value={printSettings.thermal_size}
+                    disabled={printSettings.layout !== "thermal"}
+                    onChange={(e) => updatePrintSetting("thermal_size", e.target.value)}
+                  >
+                    <MenuItem value="58mm">2 Inch / 58mm</MenuItem>
+                    <MenuItem value="80mm">3 Inch / 80mm</MenuItem>
+                    <MenuItem value="88mm">4 Inch / 88mm</MenuItem>
+                  </TextField>
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <TextField
+                    fullWidth
+                    select
+                    label="Invoice Theme"
+                    value={printSettings.invoice_theme}
+                    onChange={(e) => updatePrintSetting("invoice_theme", e.target.value)}
+                  >
+                    <MenuItem value="classic">Classic</MenuItem>
+                    <MenuItem value="professional">Professional</MenuItem>
+                    <MenuItem value="modern">Modern</MenuItem>
+                    <MenuItem value="minimal">Minimal</MenuItem>
+                    <MenuItem value="retail">Retail</MenuItem>
+                  </TextField>
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <TextField
+                    fullWidth
+                    select
+                    label="Text Size"
+                    value={printSettings.invoice_text_size}
+                    onChange={(e) => updatePrintSetting("invoice_text_size", e.target.value)}
+                  >
+                    <MenuItem value="small">Small</MenuItem>
+                    <MenuItem value="medium">Medium</MenuItem>
+                    <MenuItem value="large">Large</MenuItem>
+                  </TextField>
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <TextField
+                    fullWidth
+                    select
+                    label="Header Alignment"
+                    value={printSettings.header_alignment}
+                    onChange={(e) => updatePrintSetting("header_alignment", e.target.value)}
+                  >
+                    <MenuItem value="left">Left</MenuItem>
+                    <MenuItem value="center">Center</MenuItem>
+                    <MenuItem value="right">Right</MenuItem>
+                  </TextField>
+                </Grid>
+              </Grid>
+
+              <Divider sx={{ my: 3 }} />
+
+              <Typography fontWeight={800}>Logo placement</Typography>
+              <Grid container spacing={2.25} sx={{ mt: 0.25 }}>
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <TextField
+                    fullWidth
+                    select
+                    label="Logo Position"
+                    value={printSettings.logo_position}
+                    onChange={(e) => updatePrintSetting("logo_position", e.target.value)}
+                  >
+                    <MenuItem value="left">Left</MenuItem>
+                    <MenuItem value="center">Center</MenuItem>
+                    <MenuItem value="right">Right</MenuItem>
+                  </TextField>
+                </Grid>
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <Typography variant="body2">Logo Width: {printSettings.logo_width}px</Typography>
+                  <Slider
+                    value={Number(printSettings.logo_width)}
+                    min={40}
+                    max={160}
+                    onChange={(_, value) => updatePrintSetting("logo_width", value)}
+                  />
+                </Grid>
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <Typography variant="body2">Logo Height: {printSettings.logo_height}px</Typography>
+                  <Slider
+                    value={Number(printSettings.logo_height)}
+                    min={30}
+                    max={120}
+                    onChange={(_, value) => updatePrintSetting("logo_height", value)}
+                  />
+                </Grid>
+              </Grid>
+
+              <Divider sx={{ my: 3 }} />
+
+              <Typography fontWeight={800} mb={1}>Visible information</Typography>
+              <Grid container>
+                {[
+                  ["show_logo", "Business logo"],
+                  ["show_business_details", "Business details"],
+                  ["show_customer_details", "Customer details"],
+                  ["show_barcode", "Barcode"],
+                  ["show_batch_expiry", "Batch and expiry"],
+                  ["show_savings", "MRP and savings"],
+                  ["show_payment_qr", "UPI payment QR"],
+                  ["show_footer", "Invoice footer"],
+                  ["auto_cut", "Auto-cut thermal paper"],
+                ].map(([key, label]) => (
+                  <Grid key={key} size={{ xs: 12, sm: 6 }}>
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={Boolean(printSettings[key])}
+                          onChange={(event) =>
+                            updatePrintSetting(key, event.target.checked)
+                          }
+                        />
+                      }
+                      label={label}
+                    />
+                  </Grid>
+                ))}
+              </Grid>
+
+              <TextField
+                fullWidth
+                multiline
+                rows={2}
+                label="Invoice Footer Message"
+                value={printSettings.footer_message}
+                onChange={(e) => updatePrintSetting("footer_message", e.target.value)}
+                sx={{ mt: 2 }}
+              />
+
+              <Button
+                variant="contained"
+                startIcon={<SaveRoundedIcon />}
+                onClick={savePrintSettings}
+                sx={{ mt: 2.5 }}
+              >
+                Save Print Designer
+              </Button>
+            </CardContent>
+          </Card>
+        </Stack>
+      </Grid>
+
+      <Grid size={{ xs: 12, lg: 5 }}>
+        <Card sx={{ position: { lg: "sticky" }, top: { lg: 90 } }}>
+          <CardContent sx={{ p: 3 }}>
+            <Typography variant="h6">Live Invoice Preview</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 2.5 }}>
+              Changes appear here instantly before saving.
+            </Typography>
+            <PrintDesignerPreview
+              business={business}
+              businessLogo={businessLogo}
+              printSettings={printSettings}
+              upiSettings={upiSettings}
+            />
+          </CardContent>
+        </Card>
+      </Grid>
+    </Grid>
+  );
+
+  const paymentPanel = (
+    <Grid container spacing={3}>
+      <Grid size={{ xs: 12, lg: 7 }}>
+        <Card>
+          <CardContent sx={{ p: 3 }}>
+            <Stack direction="row" spacing={1.5} alignItems="center" mb={3}>
+              <PaymentsRoundedIcon color="primary" />
+              <Box>
+                <Typography variant="h6">UPI Payment QR</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                  Generate an invoice QR using the final payable amount.
+                </Typography>
+              </Box>
+            </Stack>
+
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={Boolean(upiSettings.enabled)}
+                  onChange={(e) => updateUpiSetting("enabled", e.target.checked)}
+                />
+              }
+              label="Enable UPI QR on invoices"
+            />
+
+            <Grid container spacing={2.25} sx={{ mt: 1 }}>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  fullWidth
+                  label="UPI ID"
+                  placeholder="business@bank"
+                  value={upiSettings.upi_id}
+                  onChange={(e) => updateUpiSetting("upi_id", e.target.value)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  fullWidth
+                  label="Payee / Business Name"
+                  value={upiSettings.payee_name}
+                  onChange={(e) => updateUpiSetting("payee_name", e.target.value)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  fullWidth
+                  label="Merchant City"
+                  value={upiSettings.merchant_city}
+                  onChange={(e) => updateUpiSetting("merchant_city", e.target.value)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  fullWidth
+                  label="Payment Note"
+                  value={upiSettings.payment_note}
+                  onChange={(e) => updateUpiSetting("payment_note", e.target.value)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  fullWidth
+                  select
+                  label="QR Position"
+                  value={upiSettings.qr_position}
+                  onChange={(e) => updateUpiSetting("qr_position", e.target.value)}
+                >
+                  <MenuItem value="below_total">Below Grand Total</MenuItem>
+                  <MenuItem value="footer">Invoice Footer</MenuItem>
+                </TextField>
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <Typography variant="body2">QR Size: {upiSettings.qr_size}px</Typography>
+                <Slider
+                  min={90}
+                  max={220}
+                  value={Number(upiSettings.qr_size)}
+                  onChange={(_, value) => updateUpiSetting("qr_size", value)}
+                />
+              </Grid>
+            </Grid>
+
+            <Grid container sx={{ mt: 1 }}>
+              {[
+                ["include_amount", "Include exact invoice amount"],
+                ["show_upi_id", "Show UPI ID below QR"],
+                ["show_invoice_number", "Include invoice number in payment note"],
+                ["show_customer_name", "Include customer name in payment note"],
+                ["show_for_cash", "Show QR for cash invoices"],
+              ].map(([key, label]) => (
+                <Grid key={key} size={{ xs: 12, md: 6 }}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={Boolean(upiSettings[key])}
+                        onChange={(e) => updateUpiSetting(key, e.target.checked)}
+                      />
+                    }
+                    label={label}
+                  />
+                </Grid>
+              ))}
+            </Grid>
+
+            <Alert severity="info" sx={{ mt: 2 }}>
+              The QR requests payment but does not automatically confirm that payment was received.
+            </Alert>
+
+            <Button
+              variant="contained"
+              startIcon={<SaveRoundedIcon />}
+              onClick={saveUpiSettings}
+              sx={{ mt: 2.5 }}
+            >
+              Save Payment QR Settings
+            </Button>
+          </CardContent>
+        </Card>
+      </Grid>
+
+      <Grid size={{ xs: 12, lg: 5 }}>
+        <Card sx={{ position: { lg: "sticky" }, top: { lg: 90 } }}>
+          <CardContent sx={{ p: 3 }}>
+            <Stack direction="row" spacing={1} alignItems="center" mb={2}>
+              <QrCode2RoundedIcon color="primary" />
+              <Typography variant="h6">Payment Preview</Typography>
+            </Stack>
+            <PrintDesignerPreview
+              business={business}
+              businessLogo={businessLogo}
+              printSettings={{
+                ...printSettings,
+                show_payment_qr: true,
+              }}
+              upiSettings={upiSettings}
+            />
           </CardContent>
         </Card>
       </Grid>
@@ -494,12 +832,9 @@ export default function Settings() {
             <TextField
               fullWidth
               label="New Username"
-              sx={{ mt: 0.5 }}
               value={username.new_user_id}
               onChange={(event) =>
-                setUsername({
-                  new_user_id: event.target.value,
-                })
+                setUsername({ new_user_id: event.target.value })
               }
             />
 
@@ -522,51 +857,32 @@ export default function Settings() {
               <LockResetRoundedIcon color="warning" />
               <Box>
                 <Typography variant="h6">Account security</Typography>
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                   Use a strong, unique password.
                 </Typography>
               </Box>
             </Stack>
 
             <Stack spacing={2}>
-              <TextField
-                fullWidth
-                type="password"
-                label="Current Password"
-                value={password.old_password}
-                onChange={(event) =>
-                  setPassword({
-                    ...password,
-                    old_password: event.target.value,
-                  })
-                }
-              />
-
-              <TextField
-                fullWidth
-                type="password"
-                label="New Password"
-                value={password.new_password}
-                onChange={(event) =>
-                  setPassword({
-                    ...password,
-                    new_password: event.target.value,
-                  })
-                }
-              />
-
-              <TextField
-                fullWidth
-                type="password"
-                label="Confirm New Password"
-                value={password.confirm_password}
-                onChange={(event) =>
-                  setPassword({
-                    ...password,
-                    confirm_password: event.target.value,
-                  })
-                }
-              />
+              {[
+                ["Current Password", "old_password"],
+                ["New Password", "new_password"],
+                ["Confirm New Password", "confirm_password"],
+              ].map(([label, key]) => (
+                <TextField
+                  key={key}
+                  fullWidth
+                  type="password"
+                  label={label}
+                  value={password[key]}
+                  onChange={(event) =>
+                    setPassword({
+                      ...password,
+                      [key]: event.target.value,
+                    })
+                  }
+                />
+              ))}
 
               <Button
                 color="warning"
@@ -582,178 +898,19 @@ export default function Settings() {
     </Grid>
   );
 
-  const printPanel = (
-    <Grid container spacing={3}>
-      <Grid size={{ xs: 12, lg: 8 }}>
-        <Card>
-          <CardContent sx={{ p: 3 }}>
-            <Stack direction="row" spacing={1.5} alignItems="center" mb={3}>
-              <PrintRoundedIcon color="primary" />
-              <Box>
-                <Typography variant="h6">Invoice Print Settings</Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                  Configure A4 and thermal invoice printing for this browser.
-                </Typography>
-              </Box>
-            </Stack>
-
-            <Grid container spacing={2.25} sx={{ mt: 0.5 }}>
-              <Grid size={{ xs: 12, md: 6 }}>
-                <TextField
-                  fullWidth
-                  select
-                  label="Default Print Layout"
-                  value={printSettings.layout}
-                  onChange={(event) =>
-                    setPrintSettings({
-                      ...printSettings,
-                      layout: event.target.value,
-                    })
-                  }
-                >
-                  <MenuItem value="a4">A4 Tax Invoice</MenuItem>
-                  <MenuItem value="thermal">Thermal Receipt</MenuItem>
-                </TextField>
-              </Grid>
-
-              <Grid size={{ xs: 12, md: 6 }}>
-                <TextField
-                  fullWidth
-                  select
-                  label="Thermal Paper Size"
-                  value={printSettings.thermal_size}
-                  disabled={printSettings.layout !== "thermal"}
-                  onChange={(event) =>
-                    setPrintSettings({
-                      ...printSettings,
-                      thermal_size: event.target.value,
-                    })
-                  }
-                >
-                  <MenuItem value="58mm">2 Inch / 58mm</MenuItem>
-                  <MenuItem value="80mm">3 Inch / 80mm</MenuItem>
-                  <MenuItem value="88mm">4 Inch / 88mm</MenuItem>
-                </TextField>
-              </Grid>
-
-              <Grid size={{ xs: 12, md: 6 }}>
-                <TextField
-                  fullWidth
-                  select
-                  label="Invoice Text Size"
-                  value={printSettings.invoice_text_size}
-                  onChange={(event) =>
-                    setPrintSettings({
-                      ...printSettings,
-                      invoice_text_size: event.target.value,
-                    })
-                  }
-                >
-                  <MenuItem value="small">Small</MenuItem>
-                  <MenuItem value="medium">Medium</MenuItem>
-                  <MenuItem value="large">Large</MenuItem>
-                </TextField>
-              </Grid>
-
-              <Grid size={{ xs: 12 }}>
-                <TextField
-                  fullWidth
-                  multiline
-                  rows={2}
-                  label="Invoice Footer Message"
-                  value={printSettings.footer_message}
-                  onChange={(event) =>
-                    setPrintSettings({
-                      ...printSettings,
-                      footer_message: event.target.value,
-                    })
-                  }
-                />
-              </Grid>
-            </Grid>
-
-            <Stack mt={2}>
-              {[
-                ["show_logo", "Show business logo"],
-                ["show_barcode", "Show product barcode"],
-                ["show_batch_expiry", "Show batch and expiry details"],
-                ["show_savings", "Show MRP and customer savings"],
-                ["auto_cut", "Auto-cut paper after printing (printer dependent)"],
-              ].map(([key, label]) => (
-                <FormControlLabel
-                  key={key}
-                  control={
-                    <Checkbox
-                      checked={Boolean(printSettings[key])}
-                      onChange={(event) =>
-                        setPrintSettings({
-                          ...printSettings,
-                          [key]: event.target.checked,
-                        })
-                      }
-                    />
-                  }
-                  label={label}
-                />
-              ))}
-            </Stack>
-
-            <Button
-              variant="contained"
-              startIcon={<SaveRoundedIcon />}
-              onClick={savePrintSettings}
-              sx={{ mt: 2 }}
-            >
-              Save Print Settings
-            </Button>
-          </CardContent>
-        </Card>
-      </Grid>
-
-      <Grid size={{ xs: 12, lg: 4 }}>
-        <Card>
-          <CardContent sx={{ p: 3 }}>
-            <Typography variant="h6">Print Preview Summary</Typography>
-            <Box
-              sx={{
-                mt: 2,
-                p: 2.5,
-                borderRadius: 3,
-                bgcolor: "#F8FAFC",
-                border: "1px dashed #CBD5E1",
-              }}
-            >
-              <Typography fontWeight={800}>
-                {printSettings.layout === "a4"
-                  ? "A4 Tax Invoice"
-                  : `Thermal ${printSettings.thermal_size}`}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" mt={1}>
-                Logo: {printSettings.show_logo ? "Visible" : "Hidden"}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                MRP & Savings: {printSettings.show_savings ? "Visible" : "Hidden"}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Batch & Expiry:{" "}
-                {printSettings.show_batch_expiry ? "Visible" : "Hidden"}
-              </Typography>
-            </Box>
-          </CardContent>
-        </Card>
-      </Grid>
-    </Grid>
-  );
-
   return (
     <AppLayout>
       <PageHeader
         title="Settings"
-        subtitle="Configure business identity, print layout, login account and security"
+        subtitle="Configure business identity, invoice designer, UPI payment QR and account security"
       />
 
       {message.text && (
-        <Alert severity={message.type} sx={{ mb: 2.5 }}>
+        <Alert
+          severity={message.type}
+          sx={{ mb: 2.5 }}
+          onClose={() => setMessage({ type: "", text: "" })}
+        >
           {message.text}
         </Alert>
       )}
@@ -766,27 +923,17 @@ export default function Settings() {
           scrollButtons="auto"
           sx={{ px: 2 }}
         >
-          <Tab
-            icon={<BusinessRoundedIcon />}
-            iconPosition="start"
-            label="Business Profile"
-          />
-          <Tab
-            icon={<PrintRoundedIcon />}
-            iconPosition="start"
-            label="Print Settings"
-          />
-          <Tab
-            icon={<PersonRoundedIcon />}
-            iconPosition="start"
-            label="Account & Security"
-          />
+          <Tab icon={<BusinessRoundedIcon />} iconPosition="start" label="Business Profile" />
+          <Tab icon={<PrintRoundedIcon />} iconPosition="start" label="Print Designer" />
+          <Tab icon={<PaymentsRoundedIcon />} iconPosition="start" label="Payment QR" />
+          <Tab icon={<PersonRoundedIcon />} iconPosition="start" label="Account & Security" />
         </Tabs>
       </Card>
 
       {tab === 0 && businessPanel}
-      {tab === 1 && printPanel}
-      {tab === 2 && accountPanel}
+      {tab === 1 && designerPanel}
+      {tab === 2 && paymentPanel}
+      {tab === 3 && accountPanel}
     </AppLayout>
   );
 }

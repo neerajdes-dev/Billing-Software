@@ -88,6 +88,12 @@ export default function CreateBill() {
         show_barcode: true,
         show_batch_expiry: true,
         show_savings: true,
+        show_payment_qr: true,
+        show_footer: true,
+        header_alignment: "left",
+        logo_position: "left",
+        logo_width: 90,
+        logo_height: 60,
         footer_message: "Thank you for your business. Visit again.",
       };
     } catch {
@@ -98,6 +104,12 @@ export default function CreateBill() {
         show_barcode: true,
         show_batch_expiry: true,
         show_savings: true,
+        show_payment_qr: true,
+        show_footer: true,
+        header_alignment: "left",
+        logo_position: "left",
+        logo_width: 90,
+        logo_height: 60,
         footer_message: "Thank you for your business. Visit again.",
       };
     }
@@ -923,6 +935,8 @@ export default function CreateBill() {
             paid_amount:
               generatedInvoice.total_amount,
             balance: 0,
+            customer_name:
+              generatedInvoice.customer_name || "",
           }}
           customer={generatedInvoice.customer}
           items={generatedInvoice.items}
