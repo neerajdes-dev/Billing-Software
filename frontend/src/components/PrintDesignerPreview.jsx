@@ -4,7 +4,6 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { QRCodeSVG } from "qrcode.react";
 import { buildUpiPaymentUrl } from "../utils/upi";
 
 const money = (value) =>
@@ -49,12 +48,18 @@ export default function PrintDesignerPreview({
       <Typography sx={{ fontSize: isThermal ? 9 : 11, fontWeight: 800 }}>
         Scan to Pay
       </Typography>
-      <QRCodeSVG
-        value={upiUrl}
-        size={isThermal ? 90 : 125}
-        level="M"
-        includeMargin
-      />
+      <Box
+            component="img"
+            src={`https://api.qrserver.com/v1/create-qr-code/?size=${isThermal ? 90 : 125}x${isThermal ? 90 : 125}&data=${encodeURIComponent(upiUrl)}`}
+            alt="UPI Payment QR"
+            sx={{
+              width: isThermal ? 90 : 125,
+              height: isThermal ? 90 : 125,
+              objectFit: "contain",
+              bgcolor: "#fff",
+              p: 0.5,
+            }}
+          />
       <Typography sx={{ fontSize: isThermal ? 9 : 11, fontWeight: 800 }}>
         {money(previewAmount)}
       </Typography>

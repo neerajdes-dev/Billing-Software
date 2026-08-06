@@ -1,4 +1,3 @@
-import { QRCodeSVG } from "qrcode.react";
 import { buildUpiPaymentUrl, DEFAULT_UPI_SETTINGS } from "../utils/upi";
 import {
   Box,
@@ -515,15 +514,25 @@ function InvoicePrint({
             Scan to Pay
           </Typography>
 
-          <QRCodeSVG
-            value={upiUrl}
-            size={
-              isThermal
+          <Box
+            component="img"
+            src={`https://api.qrserver.com/v1/create-qr-code/?size=${isThermal
                 ? Math.min(Number(upiSettings.qr_size || 150), 135)
-                : Number(upiSettings.qr_size || 150)
-            }
-            level="M"
-            includeMargin
+                : Number(upiSettings.qr_size || 150)}x${isThermal
+                ? Math.min(Number(upiSettings.qr_size || 150), 135)
+                : Number(upiSettings.qr_size || 150)}&data=${encodeURIComponent(upiUrl)}`}
+            alt="UPI Payment QR"
+            sx={{
+              width: isThermal
+                ? Math.min(Number(upiSettings.qr_size || 150), 135)
+                : Number(upiSettings.qr_size || 150),
+              height: isThermal
+                ? Math.min(Number(upiSettings.qr_size || 150), 135)
+                : Number(upiSettings.qr_size || 150),
+              objectFit: "contain",
+              bgcolor: "#fff",
+              p: 0.5,
+            }}
           />
 
           <Typography
@@ -565,16 +574,26 @@ function InvoicePrint({
             <Typography sx={{ fontSize: isThermal ? 9 : 11, fontWeight: 800 }}>
               Scan to Pay
             </Typography>
-            <QRCodeSVG
-              value={upiUrl}
-              size={
-                isThermal
+            <Box
+            component="img"
+            src={`https://api.qrserver.com/v1/create-qr-code/?size=${isThermal
                   ? Math.min(Number(upiSettings.qr_size || 150), 125)
-                  : Number(upiSettings.qr_size || 150)
-              }
-              level="M"
-              includeMargin
-            />
+                  : Number(upiSettings.qr_size || 150)}x${isThermal
+                  ? Math.min(Number(upiSettings.qr_size || 150), 125)
+                  : Number(upiSettings.qr_size || 150)}&data=${encodeURIComponent(upiUrl)}`}
+            alt="UPI Payment QR"
+            sx={{
+              width: isThermal
+                  ? Math.min(Number(upiSettings.qr_size || 150), 125)
+                  : Number(upiSettings.qr_size || 150),
+              height: isThermal
+                  ? Math.min(Number(upiSettings.qr_size || 150), 125)
+                  : Number(upiSettings.qr_size || 150),
+              objectFit: "contain",
+              bgcolor: "#fff",
+              p: 0.5,
+            }}
+          />
             {upiSettings.show_upi_id && (
               <Typography sx={{ fontSize: isThermal ? 8 : 10 }}>
                 {upiSettings.upi_id}
