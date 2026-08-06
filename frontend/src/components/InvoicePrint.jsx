@@ -47,6 +47,12 @@ function InvoicePrint({
     printSettings.footer_message ||
     "Thank you for your business. Visit again.";
 
+  const businessLogo =
+    typeof window !== "undefined"
+      ? localStorage.getItem("billing_business_logo") ||
+        "/resolvent-logo.jpg"
+      : "/resolvent-logo.jpg";
+
   const subtotal = Number(invoice.subtotal || 0);
   const gstAmount = Number(invoice.gst_amount || 0);
   const discount = Number(invoice.discount || 0);
@@ -101,7 +107,7 @@ function InvoicePrint({
           {showLogo && (
             <Box
               component="img"
-              src="/resolvent-logo.jpg"
+              src={businessLogo}
               alt="Business Logo"
               sx={{
                 width: isThermal ? 58 : 92,

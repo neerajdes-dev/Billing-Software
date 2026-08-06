@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
+  Avatar,
   Box,
   Button,
   Card,
@@ -20,6 +21,8 @@ import PersonRoundedIcon from "@mui/icons-material/PersonRounded";
 import LockResetRoundedIcon from "@mui/icons-material/LockResetRounded";
 import SaveRoundedIcon from "@mui/icons-material/SaveRounded";
 import PrintRoundedIcon from "@mui/icons-material/PrintRounded";
+import UploadRoundedIcon from "@mui/icons-material/UploadRounded";
+import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import AppLayout from "../components/AppLayout";
 import PageHeader from "../components/PageHeader";
 import {
@@ -80,6 +83,11 @@ export default function Settings() {
     }
   });
 
+  const logoInputRef = useRef(null);
+  const [businessLogo, setBusinessLogo] = useState(
+    localStorage.getItem("billing_business_logo") || "/resolvent-logo.jpg"
+  );
+
   useEffect(() => {
     getSettings(userId)
       .then((data) => {
@@ -101,6 +109,59 @@ export default function Settings() {
         })
       );
   }, [userId]);
+
+  const handleLogoUpload = (event) => {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setMessage({
+        type: "warning",
+        text: "Please select a valid image file.",
+      });
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      setMessage({
+        type: "warning",
+        text: "Logo file must be 2 MB or smaller.",
+      });
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const logoData = String(reader.result || "");
+      setBusinessLogo(logoData);
+      localStorage.setItem("billing_business_logo", logoData);
+      setMessage({
+        type: "success",
+        text: "Business logo updated successfully.",
+      });
+    };
+
+    reader.onerror = () => {
+      setMessage({
+        type: "error",
+        text: "Unable to read the selected logo file.",
+      });
+    };
+
+    reader.readAsDataURL(file);
+    event.target.value = "";
+  };
+
+  const removeBusinessLogo = () => {
+    localStorage.removeItem("billing_business_logo");
+    setBusinessLogo("/resolvent-logo.jpg");
+    setMessage({
+      type: "success",
+      text: "Custom logo removed. Default Resolvent logo restored.",
+    });
+  };
 
   const saveBusiness = async () => {
     try {
@@ -190,7 +251,7 @@ export default function Settings() {
       <Grid size={{ xs: 12, lg: 8 }}>
         <Card>
           <CardContent sx={{ p: 3 }}>
-            <Stack direction="row" spacing={1.5} alignItems="center" mb={3}>
+            <Stack direction="row" spacing={1.5} alignItems="center" mb={3.5}>
               <Box
                 sx={{
                   width: 44,
@@ -206,13 +267,78 @@ export default function Settings() {
               </Box>
               <Box>
                 <Typography variant="h6">Business profile</Typography>
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                   Information displayed on invoices and reports.
                 </Typography>
               </Box>
             </Stack>
 
-            <Grid container spacing={2}>
+            <Box
+              sx={{
+                mb: 3,
+                p: 2,
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 3,
+                display: "flex",
+                flexDirection: { xs: "column", sm: "row" },
+                alignItems: { xs: "flex-start", sm: "center" },
+                gap: 2,
+              }}
+            >
+              <Avatar
+                variant="rounded"
+                src={businessLogo}
+                alt="Business Logo"
+                sx={{
+                  width: 92,
+                  height: 72,
+                  bgcolor: "background.default",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  "& img": {
+                    objectFit: "contain",
+                    p: 0.5,
+                  },
+                }}
+              />
+
+              <Box sx={{ flex: 1 }}>
+                <Typography fontWeight={800}>Business Logo</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                  Upload PNG, JPG or WEBP up to 2 MB. The logo will appear on invoices.
+                </Typography>
+
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ mt: 1.5 }}>
+                  <Button
+                    variant="outlined"
+                    startIcon={<UploadRoundedIcon />}
+                    onClick={() => logoInputRef.current?.click()}
+                  >
+                    Upload Logo
+                  </Button>
+
+                  <Button
+                    color="error"
+                    variant="text"
+                    startIcon={<DeleteOutlineRoundedIcon />}
+                    onClick={removeBusinessLogo}
+                  >
+                    Restore Default
+                  </Button>
+                </Stack>
+
+                <input
+                  hidden
+                  ref={logoInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={handleLogoUpload}
+                />
+              </Box>
+            </Box>
+
+            <Grid container spacing={2.25}>
               <Grid size={{ xs: 12, md: 6 }}>
                 <TextField
                   fullWidth
@@ -316,6 +442,18 @@ export default function Settings() {
                 border: "1px dashed #CBD5E1",
               }}
             >
+              <Box
+                component="img"
+                src={businessLogo}
+                alt="Business Logo"
+                sx={{
+                  width: 90,
+                  height: 58,
+                  objectFit: "contain",
+                  display: "block",
+                  mb: 1.5,
+                }}
+              />
               <Typography variant="caption" color="text.secondary">
                 BUSINESS NAME
               </Typography>
@@ -343,11 +481,11 @@ export default function Settings() {
       <Grid size={{ xs: 12, md: 6 }}>
         <Card>
           <CardContent sx={{ p: 3 }}>
-            <Stack direction="row" spacing={1.5} alignItems="center" mb={3}>
+            <Stack direction="row" spacing={1.5} alignItems="center" mb={3.5}>
               <PersonRoundedIcon color="primary" />
               <Box>
                 <Typography variant="h6">Login Username</Typography>
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                   Change the username used to sign in.
                 </Typography>
               </Box>
@@ -356,6 +494,7 @@ export default function Settings() {
             <TextField
               fullWidth
               label="New Username"
+              sx={{ mt: 0.5 }}
               value={username.new_user_id}
               onChange={(event) =>
                 setUsername({
@@ -379,7 +518,7 @@ export default function Settings() {
       <Grid size={{ xs: 12, md: 6 }}>
         <Card>
           <CardContent sx={{ p: 3 }}>
-            <Stack direction="row" spacing={1.5} alignItems="center" mb={3}>
+            <Stack direction="row" spacing={1.5} alignItems="center" mb={3.5}>
               <LockResetRoundedIcon color="warning" />
               <Box>
                 <Typography variant="h6">Account security</Typography>
@@ -452,13 +591,13 @@ export default function Settings() {
               <PrintRoundedIcon color="primary" />
               <Box>
                 <Typography variant="h6">Invoice Print Settings</Typography>
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                   Configure A4 and thermal invoice printing for this browser.
                 </Typography>
               </Box>
             </Stack>
 
-            <Grid container spacing={2}>
+            <Grid container spacing={2.25} sx={{ mt: 0.5 }}>
               <Grid size={{ xs: 12, md: 6 }}>
                 <TextField
                   fullWidth
