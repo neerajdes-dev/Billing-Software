@@ -1,0 +1,2 @@
+﻿item_name,barcode,purchase_price,mrp,sale_price,gst_percent,stock,minimum_stock,batch_number,manufacturing_date,expiry_date,expiry_alert_days
+Sample Product,8901234567890,100,150,140,18,50,10,BATCH-001,2026-01-01,2027-01-01,30

@@ -28,41 +28,52 @@ class CustomerPaymentCreate(BaseModel):
 class ItemCreate(BaseModel):
     item_name: str
     barcode: str
-    purchase_price: float
-    mrp: float
-    sale_price: float
+    purchase_price: float = 0
+    mrp: float = 0
+    sale_price: float = 0
     gst_percent: float = 0
-    stock: int
+    stock: int = 0
     minimum_stock: int = 5
-    batch_number: str | None = None
-    manufacturing_date: date | None = None
-    expiry_date: date | None = None
+    batch_number: Optional[str] = None
+    manufacturing_date: Optional[date] = None
+    expiry_date: Optional[date] = None
     expiry_alert_days: int = 30
+
+
 class ItemUpdate(ItemCreate):
     pass
+
+
 class ItemImport(BaseModel):
     items: List[ItemCreate]
+
+
 class BulkItemUpdateRow(BaseModel):
     id: int
-    item_name: str | None = None
-    barcode: str | None = None
-    purchase_price: float | None = None
-    mrp: float | None = None
-    sale_price: float | None = None
-    gst_percent: float | None = None
-    minimum_stock: int | None = None
-    batch_number: str | None = None
-    manufacturing_date: date | None = None
-    expiry_date: date | None = None
-    expiry_alert_days: int | None = None
+    item_name: Optional[str] = None
+    barcode: Optional[str] = None
+    purchase_price: Optional[float] = None
+    mrp: Optional[float] = None
+    sale_price: Optional[float] = None
+    gst_percent: Optional[float] = None
+    minimum_stock: Optional[int] = None
+    batch_number: Optional[str] = None
+    manufacturing_date: Optional[date] = None
+    expiry_date: Optional[date] = None
+    expiry_alert_days: Optional[int] = None
     stock_adjustment: int = 0
     adjustment_reason: str = "Bulk update"
+
+
 class BulkItemUpdate(BaseModel):
     items: List[BulkItemUpdateRow]
+
 
 class StockAdjustmentCreate(BaseModel):
     adjustment: int
     reason: str
+
+
 class SaleProduct(BaseModel):
     item_id: int
     quantity: int

@@ -1,64 +1,23 @@
-* { box-sizing: border-box; }
-html, body, #root { min-height: 100%; margin: 0; }
-body { background: #f4f7fb; }
-button, input, select, textarea { font: inherit; }
-@media print {
-  body * {
-    visibility: hidden;
-  }
-
-  .invoice-print-area,
-  .invoice-print-area * {
-    visibility: visible;
-  }
-
-  .invoice-print-area {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    padding: 20px;
-    background: white;
-  }
-
-  .no-print {
-    display: none !important;
-  }
-
-  @page {
-    size: A4;
-    margin: 12mm;
-  }
+* {
+  box-sizing: border-box;
 }
 
-@media print {
-  body * {
-    visibility: hidden;
-  }
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
 
-  .invoice-print-area,
-  .invoice-print-area * {
-    visibility: visible;
-  }
+body {
+  background: #f4f7fb;
+}
 
-  .invoice-print-area {
-    display: block !important;
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    min-height: 100%;
-    padding: 20px;
-    background: white;
-  }
-
-  .no-print {
-    display: none !important;
-  }
-
-  @page {
-    size: A4;
-    margin: 12mm;
-  }
+button,
+input,
+select,
+textarea {
+  font: inherit;
 }
 
 .invoice-print-area {
@@ -90,13 +49,44 @@ button, input, select, textarea { font: inherit; }
     position: absolute !important;
     left: 0;
     top: 0;
-    width: 100% !important;
-    min-height: 100vh;
     margin: 0 !important;
-    padding: 20px !important;
     background: #ffffff !important;
     color: #000000 !important;
     z-index: 99999;
+    box-shadow: none !important;
+  }
+
+  .invoice-a4 {
+    width: 100% !important;
+    min-height: 100vh;
+    padding: 8mm !important;
+  }
+
+  .invoice-thermal {
+    min-height: auto !important;
+    padding: 2mm !important;
+    overflow: visible !important;
+  }
+
+  .invoice-thermal[data-thermal-size="58mm"] {
+    width: 58mm !important;
+  }
+
+  .invoice-thermal[data-thermal-size="80mm"] {
+    width: 80mm !important;
+  }
+
+  .invoice-thermal[data-thermal-size="88mm"] {
+    width: 88mm !important;
+  }
+
+  .invoice-print-area table {
+    page-break-inside: auto;
+  }
+
+  .invoice-print-area tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
   }
 
   .no-print {
@@ -104,7 +94,10 @@ button, input, select, textarea { font: inherit; }
   }
 
   @page {
-    size: A4;
-    margin: 10mm;
+    margin: 5mm;
+  }
+
+  .invoice-a4 {
+    page: invoiceA4;
   }
 }

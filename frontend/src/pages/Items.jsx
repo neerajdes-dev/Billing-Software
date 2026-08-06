@@ -272,15 +272,47 @@ const toDateInputValue = (value) => {
 };
 
 const expiryStatus = (item) => {
-  if (!item?.expiry_date) return { label: "Not Applicable", color: "default", daysRemaining: null };
-  const expiry = new Date(`${item.expiry_date}T00:00:00`);
+  if (!item?.expiry_date) {
+    return {
+      label: "Not Applicable",
+      color: "default",
+      daysRemaining: null,
+    };
+  }
+
+  const rawDate = String(item.expiry_date).slice(0, 10);
+  const expiryDate = new Date(`${rawDate}T00:00:00`);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const daysRemaining = Math.ceil((expiry - today) / 86400000);
-  if (daysRemaining < 0) return { label: "Expired", color: "error", daysRemaining };
-  if (daysRemaining <= Number(item.expiry_alert_days || 30)) {
-    return { label: "Expiring Soon", color: "warning", daysRemaining };
+
+  if (Number.isNaN(expiryDate.getTime())) {
+    return {
+      label: "Invalid Date",
+      color: "error",
+      daysRemaining: null,
+    };
   }
+
+  const daysRemaining = Math.round(
+    (expiryDate.getTime() - today.getTime()) / 86400000
+  );
+
+  if (daysRemaining < 0) {
+    return { label: "Expired", color: "error", daysRemaining };
+  }
+
+  if (daysRemaining === 0) {
+    return { label: "Expires Today", color: "error", daysRemaining };
+  }
+
+  if (daysRemaining <= Number(item.expiry_alert_days ?? 30)) {
+    return {
+      label: `Expiring in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`,
+      color: "warning",
+      daysRemaining,
+    };
+  }
+
   return { label: "Safe", color: "success", daysRemaining };
 };
 
@@ -340,20 +372,42 @@ export default function Items() {
       (filter === "healthy" && stock > minimumStock) ||
       (filter === "low" && stock > 0 && stock <= minimumStock) ||
       (filter === "out" && stock <= 0) ||
-      (filter === "expired" && expiry.label === "Expired") ||
-      (filter === "expiring" && expiry.label === "Expiring Soon") ||
+      (filter === "expired" &&
+        ["Expired", "Expires Today"].includes(expiry.label)) ||
+      (filter === "expiring" &&
+        (expiry.label === "Expires Today" ||
+          expiry.label.startsWith("Expiring in "))) ||
       (filter === "safe" && expiry.label === "Safe");
     return matchesSearch && matchesFilter;
   }), [items, search, filter]);
 
   const summary = useMemo(() => ({
     products: items.length,
-    totalStock: items.reduce((sum, item) => sum + Number(item.stock || 0), 0),
-    inventoryValue: items.reduce((sum, item) => sum + Number(item.purchase_price || 0) * Number(item.stock || 0), 0),
-    lowStock: items.filter((item) => Number(item.stock || 0) > 0 && Number(item.stock || 0) <= Number(item.minimum_stock || 0)).length,
-    outOfStock: items.filter((item) => Number(item.stock || 0) <= 0).length,
-    expired: items.filter((item) => expiryStatus(item).label === "Expired").length,
-    expiringSoon: items.filter((item) => expiryStatus(item).label === "Expiring Soon").length,
+    totalStock: items.reduce(
+      (sum, item) => sum + Number(item.stock || 0),
+      0
+    ),
+    inventoryValue: items.reduce(
+      (sum, item) =>
+        sum +
+        Number(item.purchase_price || 0) * Number(item.stock || 0),
+      0
+    ),
+    healthy: items.filter(
+      (item) => stockStatus(item).label === "Healthy"
+    ).length,
+    lowStock: items.filter(
+      (item) => stockStatus(item).label === "Low Stock"
+    ).length,
+    outOfStock: items.filter(
+      (item) => stockStatus(item).label === "Out of Stock"
+    ).length,
+    expired: items.filter((item) =>
+      ["Expired", "Expires Today"].includes(expiryStatus(item).label)
+    ).length,
+    expiringSoon: items.filter((item) =>
+      expiryStatus(item).label.startsWith("Expiring in ")
+    ).length,
   }), [items]);
 
   const openAdd = () => {
@@ -579,8 +633,8 @@ export default function Items() {
         original_gst_percent: Number(item.gst_percent || 0),
         minimum_stock: Number(item.minimum_stock ?? 5),
         batch_number: item.batch_number ?? "",
-        manufacturing_date: item.manufacturing_date ?? "",
-        expiry_date: item.expiry_date ?? "",
+        manufacturing_date: toDateInputValue(item.manufacturing_date),
+        expiry_date: toDateInputValue(item.expiry_date),
         expiry_alert_days: Number(item.expiry_alert_days ?? 30),
         current_stock: Number(item.stock || 0),
         stock_adjustment: 0,
@@ -1142,6 +1196,43 @@ export default function Items() {
   },
 },
     {
+      field: "minimum_stock",
+      headerName: "Min. Stock",
+      minWidth: 105,
+      align: "center",
+      headerAlign: "center",
+    },
+    {
+      field: "expiry_date",
+      headerName: "Expiry Date",
+      minWidth: 125,
+      valueFormatter: (value) => {
+        if (!value) return "—";
+        const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
+        return Number.isNaN(date.getTime())
+          ? "—"
+          : date.toLocaleDateString("en-IN");
+      },
+    },
+    {
+      field: "expiry_status",
+      headerName: "Expiry Status",
+      minWidth: 170,
+      sortable: false,
+      filterable: false,
+      renderCell: ({ row }) => {
+        const status = expiryStatus(row);
+        return (
+          <Chip
+            size="small"
+            label={status.label}
+            color={status.color}
+            variant="outlined"
+          />
+        );
+      },
+    },
+    {
       field: "actions",
       headerName: "Actions",
       minWidth: 330,
@@ -1206,13 +1297,28 @@ export default function Items() {
     ["Total products", summary.products, "Active inventory records"],
     ["Total stock", summary.totalStock, "Units currently available"],
     ["Inventory value", money(summary.inventoryValue), "Based on purchase price"],
-    ["Low stock", summary.lowStock, "Between 1 and 5 units"],
+    ["Healthy stock", summary.healthy, "Above minimum stock"],
+    ["Low stock", summary.lowStock, "At or below minimum stock"],
     ["Out of stock", summary.outOfStock, "Requires replenishment"],
+    ["Expired", summary.expired, "Expired or expiring today"],
+    ["Expiring soon", summary.expiringSoon, "Within the configured alert period"],
   ];
 
   return <AppLayout>
     <PageHeader title="Items & Inventory" subtitle="Manage products, pricing, GST and stock from one place" />
     {message.text && <Alert severity={message.type} sx={{ mb: 2.5 }} onClose={() => setMessage({ type: "", text: "" })}>{message.text}</Alert>}
+
+    {(summary.expired > 0 ||
+      summary.expiringSoon > 0 ||
+      summary.lowStock > 0 ||
+      summary.outOfStock > 0) && (
+      <Alert severity={summary.expired > 0 ? "error" : "warning"} sx={{ mb: 2.5 }}>
+        {summary.expired > 0 && `${summary.expired} expired/expiring-today item(s). `}
+        {summary.expiringSoon > 0 && `${summary.expiringSoon} item(s) expiring soon. `}
+        {summary.lowStock > 0 && `${summary.lowStock} low-stock item(s). `}
+        {summary.outOfStock > 0 && `${summary.outOfStock} out-of-stock item(s).`}
+      </Alert>
+    )}
 
     <Stack direction={{ xs: "column", md: "row" }} spacing={1.25} justifyContent="flex-end" sx={{ mb: 2.5 }}>
       <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={openAdd}>Add Item</Button>
@@ -1268,10 +1374,52 @@ export default function Items() {
     </Stack>
 
     <Grid container spacing={2.25} sx={{ mb: 3 }}>
-      {cards.map(([label, value, helper]) => <Grid key={label} size={{ xs: 12, sm: 6, lg: 2.4 }}><Card sx={{ height: "100%" }}><CardContent><Stack direction="row" spacing={1.25} alignItems="center"><Box sx={{ width: 42, height: 42, borderRadius: 2.5, bgcolor: "primary.light", color: "primary.main", display: "grid", placeItems: "center" }}><Inventory2RoundedIcon fontSize="small" /></Box><Box minWidth={0}><Typography variant="body2" color="text.secondary">{label}</Typography><Typography variant="h6" fontWeight={800} noWrap>{value}</Typography></Box></Stack><Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1.5 }}>{helper}</Typography></CardContent></Card></Grid>)}
+      {cards.map(([label, value, helper]) => <Grid key={label} size={{ xs: 12, sm: 6, md: 4, xl: 3 }}><Card sx={{ height: "100%" }}><CardContent><Stack direction="row" spacing={1.25} alignItems="center"><Box sx={{ width: 42, height: 42, borderRadius: 2.5, bgcolor: "primary.light", color: "primary.main", display: "grid", placeItems: "center" }}><Inventory2RoundedIcon fontSize="small" /></Box><Box minWidth={0}><Typography variant="body2" color="text.secondary">{label}</Typography><Typography variant="h6" fontWeight={800} noWrap>{value}</Typography></Box></Stack><Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1.5 }}>{helper}</Typography></CardContent></Card></Grid>)}
     </Grid>
 
-    <Card><CardContent sx={{ p: 0 }}><Box sx={{ p: 2.5, display: "flex", gap: 1.5, justifyContent: "space-between", flexDirection: { xs: "column", md: "row" }, borderBottom: 1, borderColor: "divider" }}><Box><Typography variant="h6">Inventory catalogue</Typography><Typography variant="body2" color="text.secondary">Search, filter, edit and maintain inventory records.</Typography></Box><Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}><TextField size="small" placeholder="Search item or barcode" value={search} onChange={(e) => setSearch(e.target.value)} sx={{ minWidth: { sm: 280 } }} InputProps={{ startAdornment: <InputAdornment position="start"><SearchRoundedIcon fontSize="small" /></InputAdornment> }} /><FormControl size="small" sx={{ minWidth: 160 }}><InputLabel>Stock Status</InputLabel><Select label="Stock Status" value={filter} onChange={(e) => setFilter(e.target.value)}><MenuItem value="all">All Items</MenuItem><MenuItem value="healthy">Healthy Stock</MenuItem><MenuItem value="low">Low Stock</MenuItem><MenuItem value="out">Out of Stock</MenuItem><MenuItem value="expired">Expired</MenuItem><MenuItem value="expiring">Expiring Soon</MenuItem><MenuItem value="safe">Safe Expiry</MenuItem></Select></FormControl></Stack></Box><DataGrid autoHeight rows={filtered} columns={columns} loading={loading} disableRowSelectionOnClick pageSizeOptions={[10, 25, 50, 100]} initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }} getRowHeight={() => "auto"} sx={{ border: 0, "& .MuiDataGrid-columnHeaders": { bgcolor: "background.default" }, "& .MuiDataGrid-cell": { py: 1 } }} /></CardContent></Card>
+    <Card><CardContent sx={{ p: 0 }}><Box sx={{ p: 2.5, display: "flex", gap: 1.5, justifyContent: "space-between", flexDirection: { xs: "column", md: "row" }, borderBottom: 1, borderColor: "divider" }}><Box><Typography variant="h6">Inventory catalogue</Typography><Typography variant="body2" color="text.secondary">Search, filter, edit and maintain inventory records.</Typography></Box><Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}><TextField size="small" placeholder="Search item or barcode" value={search} onChange={(e) => setSearch(e.target.value)} sx={{ minWidth: { sm: 280 } }} InputProps={{ startAdornment: <InputAdornment position="start"><SearchRoundedIcon fontSize="small" /></InputAdornment> }} /><FormControl size="small" sx={{ minWidth: 160 }}><InputLabel>Stock Status</InputLabel><Select label="Stock Status" value={filter} onChange={(e) => setFilter(e.target.value)}><MenuItem value="all">All Items</MenuItem><MenuItem value="healthy">Healthy Stock</MenuItem><MenuItem value="low">Low Stock</MenuItem><MenuItem value="out">Out of Stock</MenuItem><MenuItem value="expired">Expired</MenuItem><MenuItem value="expiring">Expiring Soon</MenuItem><MenuItem value="safe">Safe Expiry</MenuItem></Select></FormControl></Stack></Box><DataGrid
+      autoHeight
+      rows={filtered}
+      columns={columns}
+      loading={loading}
+      disableRowSelectionOnClick
+      pageSizeOptions={[10, 25, 50, 100]}
+      initialState={{
+        pagination: {
+          paginationModel: { pageSize: 10, page: 0 },
+        },
+      }}
+      getRowHeight={() => "auto"}
+      getRowClassName={({ row }) => {
+        const expiry = expiryStatus(row).label;
+        if (["Expired", "Expires Today"].includes(expiry)) {
+          return "inventory-row-expired";
+        }
+        if (stockStatus(row).label === "Out of Stock") {
+          return "inventory-row-out";
+        }
+        if (stockStatus(row).label === "Low Stock") {
+          return "inventory-row-low";
+        }
+        return "";
+      }}
+      sx={{
+        border: 0,
+        "& .MuiDataGrid-columnHeaders": {
+          bgcolor: "background.default",
+        },
+        "& .MuiDataGrid-cell": { py: 1 },
+        "& .inventory-row-expired": {
+          bgcolor: "rgba(211, 47, 47, 0.07)",
+        },
+        "& .inventory-row-out": {
+          bgcolor: "rgba(211, 47, 47, 0.04)",
+        },
+        "& .inventory-row-low": {
+          bgcolor: "rgba(237, 108, 2, 0.06)",
+        },
+      }}
+    /></CardContent></Card>
 
 
 

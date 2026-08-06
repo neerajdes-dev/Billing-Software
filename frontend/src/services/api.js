@@ -215,9 +215,7 @@ export const bulkUpdateItems = (items) =>
     method: "PUT",
     body: JSON.stringify({ items }),
   });
-// ======================================
-// Stock Adjustment APIs
-// ======================================
+
 
 export const addStockAdjustment = (itemId, data) =>
   request(`/items/${itemId}/stock-adjustments`, {
@@ -228,6 +226,8 @@ export const addStockAdjustment = (itemId, data) =>
 export const getStockAdjustmentHistory = (itemId) =>
   request(`/items/${itemId}/stock-adjustments`);
 
+export const getInventorySummary = () =>
+  request("/items/inventory-summary");
 
 export const getCustomerCreditLedger = () =>
   request("/customers/credit-ledger");
@@ -292,4 +292,3 @@ export const deleteExpense = (expenseId) =>
   request(`/expenses/${expenseId}`, {
     method: "DELETE",
   });
-export const getInventorySummary = () => request("/items/inventory-summary");

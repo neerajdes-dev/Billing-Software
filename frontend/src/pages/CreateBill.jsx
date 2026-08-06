@@ -77,6 +77,32 @@ export default function CreateBill() {
     email: "",
   });
 
+  const [printSettings, setPrintSettings] = useState(() => {
+    try {
+      return JSON.parse(
+        localStorage.getItem("billing_print_settings")
+      ) || {
+        layout: "a4",
+        thermal_size: "80mm",
+        show_logo: true,
+        show_barcode: true,
+        show_batch_expiry: true,
+        show_savings: true,
+        footer_message: "Thank you for your business. Visit again.",
+      };
+    } catch {
+      return {
+        layout: "a4",
+        thermal_size: "80mm",
+        show_logo: true,
+        show_barcode: true,
+        show_batch_expiry: true,
+        show_savings: true,
+        footer_message: "Thank you for your business. Visit again.",
+      };
+    }
+  });
+
   const [message, setMessage] = useState({
     type: "",
     text: "",
@@ -120,12 +146,34 @@ export default function CreateBill() {
     try {
       const item = await getItemByBarcode(barcode.trim());
 
+      if (Number(item.stock || 0) <= 0) {
+        throw new Error(`${item.item_name} is out of stock.`);
+      }
+
+      if (item.expiry_date) {
+        const expiry = new Date(`${String(item.expiry_date).slice(0, 10)}T00:00:00`);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        if (!Number.isNaN(expiry.getTime()) && expiry < today) {
+          throw new Error(`${item.item_name} is expired and cannot be billed.`);
+        }
+      }
+
       setCart((current) => {
         const existingItem = current.find(
           (cartItem) => cartItem.id === item.id
         );
 
         if (existingItem) {
+          if (existingItem.quantity >= Number(item.stock || 0)) {
+            setMessage({
+              type: "warning",
+              text: `Only ${item.stock} unit(s) of ${item.item_name} are available.`,
+            });
+            return current;
+          }
+
           return current.map((cartItem) =>
             cartItem.id === item.id
               ? {
@@ -156,17 +204,26 @@ export default function CreateBill() {
   };
 
   const updateQty = (id, quantity) => {
-    const parsedQuantity = Math.max(1, Number(quantity) || 1);
-
     setCart((items) =>
-      items.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              quantity: parsedQuantity,
-            }
-          : item
-      )
+      items.map((item) => {
+        if (item.id !== id) return item;
+
+        const requested = Math.max(1, Number(quantity) || 1);
+        const available = Math.max(1, Number(item.stock || 1));
+        const finalQuantity = Math.min(requested, available);
+
+        if (requested > available) {
+          setMessage({
+            type: "warning",
+            text: `Only ${available} unit(s) of ${item.item_name} are available.`,
+          });
+        }
+
+        return {
+          ...item,
+          quantity: finalQuantity,
+        };
+      })
     );
   };
 
@@ -181,7 +238,9 @@ export default function CreateBill() {
   );
 
   const totalMrp = cart.reduce(
-    (sum, item) => sum + Number(item.mrp || item.sale_price || 0) * Number(item.quantity || 0),
+    (sum, item) =>
+      sum + Number(item.mrp || item.sale_price || 0) *
+        Number(item.quantity || 0),
     0
   );
 
@@ -231,12 +290,9 @@ export default function CreateBill() {
         const itemGst =
           (baseAmount * Number(item.gst_percent || 0)) / 100;
 
-        const lineMrp = Number(item.mrp || item.sale_price || 0) * Number(item.quantity || 0);
         return {
           ...item,
-          mrp: Number(item.mrp || item.sale_price || 0),
           rate: Number(item.sale_price || 0),
-          saving: Math.max(lineMrp - baseAmount, 0),
           amount: baseAmount + itemGst,
         };
       });
@@ -276,9 +332,9 @@ export default function CreateBill() {
         payment_mode: paymentMode,
 
         subtotal,
-        total_mrp: result.total_mrp || totalMrp,
-        total_saving: result.total_saving || totalSaving,
         gst_amount: gst,
+        total_mrp: totalMrp,
+        total_saving: totalSaving,
         total_amount:
           result.final_amount ||
           result.total_amount ||
@@ -499,9 +555,12 @@ export default function CreateBill() {
                         <TableCell width={110}>
                           Quantity
                         </TableCell>
-                        <TableCell align="right">MRP</TableCell>
-                        <TableCell align="right">Sales Price</TableCell>
-                        <TableCell align="right">Saving</TableCell>
+                        <TableCell align="right">
+                          MRP
+                        </TableCell>
+                        <TableCell align="right">
+                          Rate
+                        </TableCell>
                         <TableCell align="right">
                           GST
                         </TableCell>
@@ -515,7 +574,7 @@ export default function CreateBill() {
                     <TableBody>
                       {!cart.length && (
                         <TableRow>
-                          <TableCell colSpan={8}>
+                          <TableCell colSpan={7}>
                             <Box
                               sx={{
                                 py: 7,
@@ -588,12 +647,19 @@ export default function CreateBill() {
                               />
                             </TableCell>
 
-                            <TableCell align="right">{money(item.mrp || item.sale_price)}</TableCell>
-                            <TableCell align="right">{money(item.sale_price)}</TableCell>
-                            <TableCell align="right"><Typography color="success.main" fontWeight={700}>{money(Math.max((Number(item.mrp || item.sale_price)-Number(item.sale_price))*Number(item.quantity||0),0))}</Typography></TableCell>
+                            <TableCell align="right">
+                              {money(item.mrp || item.sale_price)}
+                            </TableCell>
 
                             <TableCell align="right">
-                              {Number(item.gst_percent || 0).toFixed(2)}%
+                              {money(item.sale_price)}
+                            </TableCell>
+
+                            <TableCell align="right">
+                              {Number(
+                                item.gst_percent || 0
+                              ).toFixed(2)}
+                              %
                             </TableCell>
 
                             <TableCell align="right">
@@ -643,8 +709,32 @@ export default function CreateBill() {
                 </Typography>
 
                 <Stack spacing={1.7}>
-                  <Stack direction="row" justifyContent="space-between"><Typography color="text.secondary">Total MRP</Typography><Typography fontWeight={700}>{money(totalMrp)}</Typography></Stack>
-                  <Stack direction="row" justifyContent="space-between"><Typography color="success.main" fontWeight={700}>You Save</Typography><Typography color="success.main" fontWeight={800}>{money(totalSaving)}</Typography></Stack>
+                  <Stack
+                    direction="row"
+                    justifyContent="space-between"
+                  >
+                    <Typography color="text.secondary">
+                      Total MRP
+                    </Typography>
+
+                    <Typography fontWeight={700}>
+                      {money(totalMrp)}
+                    </Typography>
+                  </Stack>
+
+                  <Stack
+                    direction="row"
+                    justifyContent="space-between"
+                  >
+                    <Typography color="success.main" fontWeight={700}>
+                      Customer Saving
+                    </Typography>
+
+                    <Typography color="success.main" fontWeight={800}>
+                      {money(totalSaving)}
+                    </Typography>
+                  </Stack>
+
                   <Stack
                     direction="row"
                     justifyContent="space-between"
@@ -744,6 +834,55 @@ export default function CreateBill() {
                       {money(lastBill.total_amount)}
                     </Typography>
 
+                    <TextField
+                      fullWidth
+                      select
+                      size="small"
+                      label="Print Layout"
+                      value={printSettings.layout}
+                      onChange={(event) => {
+                        const next = {
+                          ...printSettings,
+                          layout: event.target.value,
+                        };
+                        setPrintSettings(next);
+                        localStorage.setItem(
+                          "billing_print_settings",
+                          JSON.stringify(next)
+                        );
+                      }}
+                      sx={{ mt: 2 }}
+                    >
+                      <MenuItem value="a4">A4 Tax Invoice</MenuItem>
+                      <MenuItem value="thermal">Thermal Receipt</MenuItem>
+                    </TextField>
+
+                    {printSettings.layout === "thermal" && (
+                      <TextField
+                        fullWidth
+                        select
+                        size="small"
+                        label="Thermal Paper"
+                        value={printSettings.thermal_size}
+                        onChange={(event) => {
+                          const next = {
+                            ...printSettings,
+                            thermal_size: event.target.value,
+                          };
+                          setPrintSettings(next);
+                          localStorage.setItem(
+                            "billing_print_settings",
+                            JSON.stringify(next)
+                          );
+                        }}
+                        sx={{ mt: 1.5 }}
+                      >
+                        <MenuItem value="58mm">2 Inch / 58mm</MenuItem>
+                        <MenuItem value="80mm">3 Inch / 80mm</MenuItem>
+                        <MenuItem value="88mm">4 Inch / 88mm</MenuItem>
+                      </TextField>
+                    )}
+
                     <Button
                       fullWidth
                       variant="contained"
@@ -773,15 +912,21 @@ export default function CreateBill() {
             payment_mode:
               generatedInvoice.payment_mode,
             subtotal: generatedInvoice.subtotal,
-            total_mrp: generatedInvoice.total_mrp,
-            total_saving: generatedInvoice.total_saving,
             gst_amount:
               generatedInvoice.gst_amount,
+            total_mrp:
+              generatedInvoice.total_mrp,
+            total_saving:
+              generatedInvoice.total_saving,
             total_amount:
               generatedInvoice.total_amount,
+            paid_amount:
+              generatedInvoice.total_amount,
+            balance: 0,
           }}
           customer={generatedInvoice.customer}
           items={generatedInvoice.items}
+          printSettings={printSettings}
         />
       )}
     </AppLayout>

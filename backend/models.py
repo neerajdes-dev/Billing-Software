@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, DateTime, Date, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -38,20 +38,29 @@ class CustomerPayment(Base):
 
 class Item(Base):
     __tablename__ = "items"
+
     id = Column(Integer, primary_key=True, index=True)
     item_name = Column(String, nullable=False)
-    barcode = Column(String, unique=True, nullable=False)
-    purchase_price = Column(Float, nullable=False)
+    barcode = Column(String, unique=True, nullable=False, index=True)
+    purchase_price = Column(Float, nullable=False, default=0)
     mrp = Column(Float, nullable=False, default=0)
-    sale_price = Column(Float, nullable=False)
-    gst_percent = Column(Float, default=0)
-    stock = Column(Integer, default=0)
+    sale_price = Column(Float, nullable=False, default=0)
+    gst_percent = Column(Float, nullable=False, default=0)
+    stock = Column(Integer, nullable=False, default=0)
+
     minimum_stock = Column(Integer, nullable=False, default=5)
     batch_number = Column(String)
     manufacturing_date = Column(Date)
     expiry_date = Column(Date)
     expiry_alert_days = Column(Integer, nullable=False, default=30)
+
     created_at = Column(DateTime, default=datetime.now)
+    stock_adjustments = relationship(
+        "StockAdjustment",
+        back_populates="item",
+        cascade="all, delete-orphan",
+    )
+
 
 class StockAdjustment(Base):
     __tablename__ = "stock_adjustments"
@@ -62,6 +71,7 @@ class StockAdjustment(Base):
     new_stock = Column(Integer, nullable=False)
     reason = Column(String, nullable=False, default="Bulk update")
     created_at = Column(DateTime, default=datetime.now)
+    item = relationship("Item", back_populates="stock_adjustments")
 
 class Sale(Base):
     __tablename__ = "sales"
