@@ -1529,6 +1529,7 @@ export default function CreateBill() {
                       Add
                     </Button>
                   </Grid>
+                </Grid>
 
                 {(recentProducts.length >
                   0 ||
