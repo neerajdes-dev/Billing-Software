@@ -731,62 +731,76 @@ export default function SalesReport() {
               </Box>
 
               <Stack
-                direction={{
-                  xs: "column",
-                  sm: "row",
-                }}
-                spacing={1}
-              >
-                <TextField
-                  size="small"
-                  placeholder="Search invoice or customer"
-                  value={search}
-                  onChange={(event) =>
-                    setSearch(event.target.value)
-                  }
-                  sx={{
-                    minWidth: {
-                      sm: 280,
-                    },
-                  }}
-                  slotProps={{
-                    input: {
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <SearchRoundedIcon fontSize="small" />
-                        </InputAdornment>
-                      ),
-                    },
-                  }}
-                />
+  direction={{ xs: "column", md: "row" }}
+  spacing={1.25}
+  useFlexGap
+  flexWrap="wrap"
+  alignItems={{ xs: "stretch", md: "center" }}
+>
+  <TextField
+    size="small"
+    placeholder="Search invoice or customer"
+    value={search}
+    onChange={(event) =>
+      setSearch(event.target.value)
+    }
+    sx={{
+      width: { xs: "100%", md: 320 },
+      flexShrink: 0,
+    }}
+    slotProps={{
+      input: {
+        startAdornment: (
+          <InputAdornment position="start">
+            <SearchRoundedIcon fontSize="small" />
+          </InputAdornment>
+        ),
+      },
+    }}
+  />
 
-                <Button
-                  variant="outlined"
-                  startIcon={<RefreshRoundedIcon />}
-                  onClick={() => load()}
-                  disabled={loading}
-                >
-                  Refresh
-                </Button>
+  <Button
+    variant="outlined"
+    startIcon={<RefreshRoundedIcon />}
+    onClick={() => load()}
+    disabled={loading}
+    sx={{
+      height: 42,
+      minWidth: 120,
+      flexShrink: 0,
+    }}
+  >
+    Refresh
+  </Button>
 
-                <Button
-                  variant="outlined"
-                  startIcon={<FileDownloadRoundedIcon />}
-                  onClick={exportExcel}
-                  disabled={!filteredSales.length}
-                >
-                  Export Excel
-                </Button>
+  <Button
+    variant="outlined"
+    startIcon={<FileDownloadRoundedIcon />}
+    onClick={exportExcel}
+    disabled={!filteredSales.length}
+    sx={{
+      height: 42,
+      minWidth: 145,
+      flexShrink: 0,
+    }}
+  >
+    Export Excel
+  </Button>
 
-                <Button
-                  variant="outlined"
-                  startIcon={<PrintRoundedIcon />}
-                  onClick={printReport}
-                  disabled={!filteredSales.length}
-                >
-                  Print
-                </Button>
-              </Stack>
+  <Button
+    variant="outlined"
+    startIcon={<PrintRoundedIcon />}
+    onClick={printReport}
+    disabled={!filteredSales.length}
+    sx={{
+      height: 42,
+      minWidth: 110,
+      flexShrink: 0,
+    }}
+  >
+    Print
+  </Button>
+</Stack>
             </Stack>
 
             <Stack
