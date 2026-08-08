@@ -72,6 +72,91 @@ const normalizeHeader = (value) =>
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
 
+
+const normalizeExcelDate = (value) => {
+  if (
+    value === undefined ||
+    value === null ||
+    String(value).trim() === ""
+  ) {
+    return null;
+  }
+
+  // SheetJS may return a real Date object when cellDates: true.
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  const textValue = String(value).trim();
+
+  // Already ISO date or ISO datetime.
+  const isoMatch = textValue.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  }
+
+  // Excel serial date, e.g. 46023.
+  const serial = Number(textValue);
+  if (
+    Number.isFinite(serial) &&
+    serial > 1000 &&
+    serial < 100000
+  ) {
+    const excelEpoch = Date.UTC(1899, 11, 30);
+    const date = new Date(excelEpoch + serial * 86400000);
+
+    if (!Number.isNaN(date.getTime())) {
+      return date.toISOString().slice(0, 10);
+    }
+  }
+
+  // DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY
+  const dmyMatch = textValue.match(
+    /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/
+  );
+
+  if (dmyMatch) {
+    const [, day, month, year] = dmyMatch;
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  // MM/DD/YYYY fallback for US-formatted values when the first number
+  // cannot be a valid day in DD/MM interpretation.
+  const mdyMatch = textValue.match(
+    /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/
+  );
+
+  if (mdyMatch) {
+    const [, month, day, year] = mdyMatch;
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  return null;
+};
+
+const isValidIsoDate = (value) => {
+  if (!value) return true;
+
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return false;
+
+  const [, year, month, day] = match;
+  const date = new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day)
+  );
+
+  return (
+    date.getFullYear() === Number(year) &&
+    date.getMonth() === Number(month) - 1 &&
+    date.getDate() === Number(day)
+  );
+};
+
 const normalizeImportRow = (row) => {
   const normalizedRow = Object.entries(row || {}).reduce((result, [key, value]) => {
     result[normalizeHeader(key)] = value;
@@ -177,8 +262,8 @@ const normalizeImportRow = (row) => {
     stock: cleanNumber(stock),
     minimum_stock: minimumStock === "" ? 5 : cleanNumber(minimumStock),
     batch_number: String(batchNumber || "").trim(),
-    manufacturing_date: String(manufacturingDate || "").trim() || null,
-    expiry_date: String(expiryDate || "").trim() || null,
+    manufacturing_date: normalizeExcelDate(manufacturingDate),
+    expiry_date: normalizeExcelDate(expiryDate),
     expiry_alert_days: expiryAlertDays === "" ? 30 : cleanNumber(expiryAlertDays),
   };
 };
@@ -523,17 +608,23 @@ export default function Items() {
       ["5", "sale_price cannot exceed mrp."],
       ["6", "gst_percent and stock cannot be negative."],
       ["7", "Stock must be entered as a whole number."],
-      ["8", "Delete the sample row before entering actual inventory, if required."],
+      ["8", "Use YYYY-MM-DD for dates. Excel date cells are also supported and converted automatically."],
+      ["9", "Delete the sample row before entering actual inventory, if required."],
     ]);
 
     itemsSheet["!cols"] = [
-      { wch: 24 },
-      { wch: 18 },
-      { wch: 18 },
-      { wch: 12 },
-      { wch: 16 },
-      { wch: 15 },
-      { wch: 12 },
+      { wch: 24 }, // item_name
+      { wch: 18 }, // barcode
+      { wch: 18 }, // purchase_price
+      { wch: 12 }, // mrp
+      { wch: 16 }, // sale_price
+      { wch: 14 }, // gst_percent
+      { wch: 12 }, // stock
+      { wch: 16 }, // minimum_stock
+      { wch: 16 }, // batch_number
+      { wch: 20 }, // manufacturing_date
+      { wch: 16 }, // expiry_date
+      { wch: 18 }, // expiry_alert_days
     ];
     instructionSheet["!cols"] = [{ wch: 6 }, { wch: 70 }];
 
@@ -575,7 +666,8 @@ export default function Items() {
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, {
         defval: "",
-        raw: false,
+        raw: true,
+        cellDates: true,
       });
 
       if (!rows.length) {
@@ -601,13 +693,32 @@ export default function Items() {
         row.expiry_alert_days < 0 || row.sale_price > row.mrp ||
         row.purchase_price > row.sale_price || !Number.isInteger(row.stock) ||
         !Number.isInteger(row.minimum_stock) || !Number.isInteger(row.expiry_alert_days) ||
+        !isValidIsoDate(row.manufacturing_date) ||
+        !isValidIsoDate(row.expiry_date) ||
         (row.manufacturing_date && row.expiry_date &&
-          new Date(row.expiry_date) < new Date(row.manufacturing_date))
+          new Date(`${row.expiry_date}T00:00:00`) <
+            new Date(`${row.manufacturing_date}T00:00:00`))
       );
-      if (invalid) throw new Error(`Invalid pricing or stock for ${invalid.item_name}.`);
+
+      if (invalid) {
+        throw new Error(
+          `Invalid pricing, stock or date for ${invalid.item_name}. ` +
+          `Dates must be valid and will be converted to YYYY-MM-DD automatically.`
+        );
+      }
       const result = await importItems(normalized);
       await load(true);
-      setMessage({ type: "success", text: `${result.created || 0} items imported. ${result.skipped?.length || 0} duplicate barcodes skipped.` });
+      const failedCount = Array.isArray(result.failed)
+        ? result.failed.length
+        : 0;
+
+      setMessage({
+        type: failedCount ? "warning" : "success",
+        text:
+          `${result.created || 0} items imported. ` +
+          `${result.skipped?.length || 0} duplicate barcodes skipped.` +
+          (failedCount ? ` ${failedCount} row(s) failed validation.` : ""),
+      });
     } catch (error) {
       setMessage({ type: "error", text: error.message });
     } finally {
