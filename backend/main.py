@@ -190,8 +190,8 @@ def validate_item_values(
             detail="Expiry date cannot be before manufacturing date",
         )
 
-@app.get("/")
-def home():
+@app.api_route("/", methods=["GET", "HEAD"])
+def root():
     return {"message": "Resolvent Billing Software API Running"}
 
 
