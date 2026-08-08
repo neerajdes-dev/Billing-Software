@@ -72,9 +72,19 @@ const money = (value) =>
 
 const formatDate = (value) => {
   if (!value) return "—";
+
   const raw = String(value).slice(0, 10);
   const date = new Date(`${raw}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString("en-IN");
+
+  if (Number.isNaN(date.getTime())) return "—";
+
+  return date
+    .toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    })
+    .replace(/ /g, "-");
 };
 
 const todayStart = () => {
@@ -111,7 +121,12 @@ const getExpiryStatus = (item) => {
     return { key: "today", label: "Expires Today", color: "error", daysRemaining };
   }
   if (daysRemaining <= Number(item.expiry_alert_days ?? 30)) {
-    return { key: "expiring", label: "Expiring Soon", color: "warning", daysRemaining };
+    return {
+      key: "expiring",
+      label: `Expiring in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`,
+      color: "warning",
+      daysRemaining,
+    };
   }
   return { key: "safe", label: "Safe", color: "success", daysRemaining };
 };
@@ -155,7 +170,7 @@ const buildExportRow = (item) => {
     "Stock Value": Number(item.purchase_price || 0) * Number(item.stock || 0),
     "Manufacturing Date": item.manufacturing_date || "",
     "Expiry Date": item.expiry_date || "",
-    "Days Remaining": expiry.daysRemaining ?? "",
+    "Days Left": expiry.daysRemaining ?? "",
     "Stock Status": stock.label,
     "Expiry Status": expiry.label,
     Priority: priority.label,
@@ -479,7 +494,7 @@ export default function StockReport() {
             <div class="box"><div class="label">Critical Products</div><div class="value">${summary.critical}</div></div>
           </div>
           <table>
-            <thead><tr><th>Item</th><th>Barcode</th><th>Batch</th><th>Stock</th><th>Min.</th><th>Stock Value</th><th>Expiry</th><th>Days</th><th>Stock Status</th><th>Expiry Status</th><th>Priority</th></tr></thead>
+            <thead><tr><th>Item</th><th>Barcode</th><th>Batch</th><th>Stock</th><th>Min.</th><th>Stock Value</th><th>Expiry</th><th>Days Left</th><th>Stock Status</th><th>Expiry Status</th><th>Priority</th></tr></thead>
             <tbody>${rowsHtml}</tbody>
           </table>
           <div class="footer"><span>Powered by Resolvent IT Services Pvt. Ltd.</span><span>Authorized Signature ____________________</span></div>
@@ -784,12 +799,41 @@ export default function StockReport() {
           </Box>
 
           <TableContainer sx={{ maxHeight: 650 }}>
-            <Table stickyHeader size="small">
+            <Table
+              stickyHeader
+              size="small"
+              sx={{
+                minWidth: 1510,
+                "& .MuiTableCell-root": {
+                  verticalAlign: "middle",
+                },
+                "& .MuiTableCell-head": {
+                  fontWeight: 800,
+                  whiteSpace: "nowrap",
+                },
+              }}
+            >
               <TableHead>
                 <TableRow>
-                  <TableCell padding="checkbox"><Checkbox checked={allVisibleSelected} indeterminate={selectedRows.length > 0 && !allVisibleSelected} onChange={toggleAllVisible} /></TableCell>
-                  <TableCell sx={{ position: "sticky", left: 0, zIndex: 4, bgcolor: "background.paper", minWidth: 210 }}>Item</TableCell>
-                  <TableCell>Barcode</TableCell><TableCell>Batch No.</TableCell><TableCell align="right">Purchase</TableCell><TableCell align="right">Sale</TableCell><TableCell align="center">Stock</TableCell><TableCell align="center">Minimum</TableCell><TableCell align="right">Stock Value</TableCell><TableCell>MFG Date</TableCell><TableCell>Expiry Date</TableCell><TableCell align="center">Days</TableCell><TableCell>Stock Status</TableCell><TableCell>Expiry Status</TableCell><TableCell>Priority</TableCell>
+                  <TableCell padding="checkbox">
+                    <Checkbox
+                      checked={allVisibleSelected}
+                      indeterminate={selectedRows.length > 0 && !allVisibleSelected}
+                      onChange={toggleAllVisible}
+                    />
+                  </TableCell>
+                  <TableCell sx={{ minWidth: 310, width: 310 }}>Item Details</TableCell>
+                  <TableCell align="right" sx={{ minWidth: 110 }}>Purchase</TableCell>
+                  <TableCell align="right" sx={{ minWidth: 110 }}>Sale</TableCell>
+                  <TableCell align="center" sx={{ minWidth: 80 }}>Stock</TableCell>
+                  <TableCell align="center" sx={{ minWidth: 95 }}>Minimum</TableCell>
+                  <TableCell align="right" sx={{ minWidth: 125 }}>Stock Value</TableCell>
+                  <TableCell sx={{ minWidth: 120 }}>MFG Date</TableCell>
+                  <TableCell sx={{ minWidth: 120 }}>Expiry Date</TableCell>
+                  <TableCell align="center" sx={{ minWidth: 90 }}>Days Left</TableCell>
+                  <TableCell sx={{ minWidth: 135 }}>Stock Status</TableCell>
+                  <TableCell sx={{ minWidth: 170 }}>Expiry Status</TableCell>
+                  <TableCell sx={{ minWidth: 105 }}>Priority</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -797,17 +841,70 @@ export default function StockReport() {
                   const stock = getStockStatus(item);
                   const expiry = getExpiryStatus(item);
                   const priority = getPriority(item);
-                  const rowBg = priority.key === "critical" ? "rgba(211,47,47,.055)" : priority.key === "high" ? "rgba(237,108,2,.055)" : "rgba(46,125,50,.025)";
+                  const rowBg =
+                    priority.key === "critical"
+                      ? "rgba(211,47,47,.06)"
+                      : priority.key === "high"
+                      ? "rgba(237,108,2,.055)"
+                      : "transparent";
 
                   return (
                     <TableRow key={item.id} hover selected={selectedIds.has(item.id)} sx={{ bgcolor: rowBg }}>
-                      <TableCell padding="checkbox"><Checkbox checked={selectedIds.has(item.id)} onChange={() => toggleRow(item.id)} /></TableCell>
-                      <TableCell sx={{ position: "sticky", left: 0, zIndex: 1, bgcolor: "inherit", minWidth: 210 }}>
-                        <Typography fontWeight={700}>{item.item_name}</Typography>
-                        <Typography variant="caption" color="text.secondary">GST {Number(item.gst_percent || 0)}%</Typography>
+                      <TableCell padding="checkbox">
+                        <Checkbox
+                          checked={selectedIds.has(item.id)}
+                          onChange={() => toggleRow(item.id)}
+                        />
                       </TableCell>
-                      <TableCell>{item.barcode || "—"}</TableCell>
-                      <TableCell>{item.batch_number || "—"}</TableCell>
+
+                      <TableCell sx={{ minWidth: 310, maxWidth: 310, py: 1.25 }}>
+                        <Stack direction="row" spacing={1.25} alignItems="flex-start">
+                          <Box
+                            sx={{
+                              width: 38,
+                              height: 38,
+                              borderRadius: 2,
+                              bgcolor: "action.hover",
+                              color: "primary.main",
+                              display: "grid",
+                              placeItems: "center",
+                              flexShrink: 0,
+                            }}
+                          >
+                            <Inventory2RoundedIcon fontSize="small" />
+                          </Box>
+
+                          <Box sx={{ minWidth: 0 }}>
+                            <Typography
+                              fontWeight={800}
+                              sx={{
+                                lineHeight: 1.25,
+                                overflowWrap: "anywhere",
+                              }}
+                            >
+                              {item.item_name || "Unnamed Item"}
+                            </Typography>
+
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                              display="block"
+                              sx={{ mt: 0.35, lineHeight: 1.35 }}
+                            >
+                              Barcode: {item.barcode || "—"}
+                            </Typography>
+
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                              display="block"
+                              sx={{ lineHeight: 1.35 }}
+                            >
+                              Batch: {item.batch_number || "—"} · GST {Number(item.gst_percent || 0)}%
+                            </Typography>
+                          </Box>
+                        </Stack>
+                      </TableCell>
                       <TableCell align="right">{money(item.purchase_price)}</TableCell>
                       <TableCell align="right">{money(item.sale_price)}</TableCell>
                       <TableCell align="center"><Typography fontWeight={800}>{Number(item.stock || 0)}</Typography></TableCell>
@@ -816,16 +913,56 @@ export default function StockReport() {
                       <TableCell>{formatDate(item.manufacturing_date)}</TableCell>
                       <TableCell>{formatDate(item.expiry_date)}</TableCell>
                       <TableCell align="center">{expiry.daysRemaining ?? "—"}</TableCell>
-                      <TableCell><Chip size="small" label={stock.label} color={stock.color} variant="outlined" /></TableCell>
-                      <TableCell><Tooltip title={expiry.daysRemaining === null ? "" : `${expiry.daysRemaining} day(s) remaining`}><Chip size="small" label={expiry.label} color={expiry.color} variant="outlined" /></Tooltip></TableCell>
-                      <TableCell><Chip size="small" label={priority.label} color={priority.color} /></TableCell>
+                      <TableCell>
+                        <Tooltip
+                          title={`Current: ${Number(item.stock || 0)} | Minimum: ${Number(item.minimum_stock || 0)}`}
+                          arrow
+                        >
+                          <Chip
+                            size="small"
+                            label={stock.label}
+                            color={stock.color}
+                            variant="outlined"
+                          />
+                        </Tooltip>
+                      </TableCell>
+
+                      <TableCell>
+                        <Tooltip
+                          title={
+                            expiry.daysRemaining === null
+                              ? "No expiry date configured"
+                              : expiry.daysRemaining < 0
+                              ? `${Math.abs(expiry.daysRemaining)} day(s) past expiry`
+                              : `${expiry.daysRemaining} day(s) remaining`
+                          }
+                          arrow
+                        >
+                          <Chip
+                            size="small"
+                            label={expiry.label}
+                            color={expiry.color}
+                            variant="outlined"
+                            sx={{ maxWidth: 165 }}
+                          />
+                        </Tooltip>
+                      </TableCell>
+
+                      <TableCell>
+                        <Chip
+                          size="small"
+                          label={priority.label}
+                          color={priority.color}
+                          variant={priority.key === "normal" ? "outlined" : "filled"}
+                        />
+                      </TableCell>
                     </TableRow>
                   );
                 })}
 
                 {!filtered.length && !loading && (
                   <TableRow>
-                    <TableCell colSpan={15}>
+                    <TableCell colSpan={13}>
                       <Stack alignItems="center" spacing={1.25} sx={{ py: 9 }}>
                         <Box sx={{ width: 64, height: 64, borderRadius: "50%", bgcolor: "action.hover", display: "grid", placeItems: "center" }}><Inventory2RoundedIcon color="disabled" sx={{ fontSize: 34 }} /></Box>
                         <Typography variant="h6">No products match your filters</Typography>
@@ -837,7 +974,7 @@ export default function StockReport() {
                 )}
 
                 {loading && (
-                  <TableRow><TableCell colSpan={15}><Stack alignItems="center" spacing={1.5} sx={{ py: 8 }}><CircularProgress size={30} /><Typography variant="body2" color="text.secondary">Loading stock and expiry data...</Typography></Stack></TableCell></TableRow>
+                  <TableRow><TableCell colSpan={13}><Stack alignItems="center" spacing={1.5} sx={{ py: 8 }}><CircularProgress size={30} /><Typography variant="body2" color="text.secondary">Loading stock and expiry data...</Typography></Stack></TableCell></TableRow>
                 )}
               </TableBody>
             </Table>
