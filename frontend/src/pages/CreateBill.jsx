@@ -299,9 +299,17 @@ export default function CreateBill() {
 
   useEffect(() => {
     const onKeyDown = (event) => {
-      if (event.key === "F2") {
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        event.key.toLowerCase() === "f"
+      ) {
         event.preventDefault();
         productSearchRef.current?.focus?.();
+      }
+
+      if (event.key === "F2") {
+        event.preventDefault();
+        scannerRef.current?.focus?.();
       }
 
       if (event.key === "F4") {
@@ -1079,7 +1087,7 @@ export default function CreateBill() {
       <Box className="no-print">
         <PageHeader
           title="Create Invoice"
-          subtitle="Barcode scanning, smart product search, hold/resume billing and flexible payments"
+          subtitle="Smart product search, barcode scanning, hold/resume billing and flexible payments"
         />
 
         {message.text && (
@@ -1106,7 +1114,7 @@ export default function CreateBill() {
           justifyContent="flex-end"
           sx={{ mb: 2 }}
         >
-          <Tooltip title="F2 Product Search · F4 Cash · F5 Generate Bill">
+          <Tooltip title="Ctrl+F Product Search · F2 Barcode · F4 Cash · F5 Generate Bill">
             <Chip
               icon={<KeyboardRoundedIcon />}
               label="Keyboard Shortcuts"
@@ -1174,8 +1182,7 @@ export default function CreateBill() {
                       color="text.secondary"
                       sx={{ mt: 0.5 }}
                     >
-                      Scan a barcode or search the
-                      catalogue by product name.
+                      Select a customer, then add products by name or barcode.
                     </Typography>
                   </Box>
 
@@ -1300,57 +1307,34 @@ export default function CreateBill() {
                     />
                   </Grid>
 
-                  <Grid
-                    size={{
-                      xs: 12,
-                      md: 5,
-                    }}
-                  >
-                    <TextField
-                      fullWidth
-                      inputRef={scannerRef}
-                      label="Scan / Enter Barcode"
-                      value={barcode}
-                      onChange={(event) =>
-                        setBarcode(
-                          event.target.value
-                        )
-                      }
-                      onKeyDown={(event) => {
-                        if (
-                          event.key === "Enter"
-                        ) {
-                          event.preventDefault();
-                          addByBarcode();
-                        }
-                      }}
-                      InputProps={{
-                        startAdornment: (
-                          <InputAdornment position="start">
-                            <QrCodeScannerRoundedIcon />
-                          </InputAdornment>
-                        ),
-                      }}
-                    />
-                  </Grid>
-
-                  <Grid
-                    size={{
-                      xs: 12,
-                      md: 2,
-                    }}
-                  >
-                    <Button
-                      fullWidth
-                      variant="contained"
-                      startIcon={
-                        <AddRoundedIcon />
-                      }
-                      onClick={addByBarcode}
-                      sx={{ minHeight: 56 }}
+                  <Grid size={{ xs: 12 }}>
+                    <Divider sx={{ my: 0.5 }} />
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      justifyContent="space-between"
+                      spacing={1}
+                      sx={{ mt: 1 }}
                     >
-                      Add
-                    </Button>
+                      <Box>
+                        <Typography fontWeight={800}>
+                          Product Entry
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                        >
+                          Search selection adds immediately. Barcode can be scanned or entered manually.
+                        </Typography>
+                      </Box>
+
+                      <Chip
+                        size="small"
+                        icon={<KeyboardRoundedIcon />}
+                        label="Ctrl+F Search · F2 Barcode"
+                        variant="outlined"
+                      />
+                    </Stack>
                   </Grid>
 
                   <Grid
@@ -1422,23 +1406,27 @@ export default function CreateBill() {
                             spacing={2}
                             width="100%"
                           >
-                            <Box>
+                            <Box sx={{ minWidth: 0 }}>
                               <Typography fontWeight={800}>
-                                {
-                                  option.item_name
-                                }
+                                {option.item_name}
                               </Typography>
+
                               <Typography
                                 variant="caption"
                                 color="text.secondary"
+                                display="block"
                               >
-                                {
-                                  option.barcode
-                                }{" "}
-                                · Stock{" "}
-                                {
-                                  option.stock
-                                }
+                                Barcode: {option.barcode || "—"}
+                              </Typography>
+
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                                display="block"
+                              >
+                                MRP {money(option.mrp || option.sale_price)} ·
+                                Sale {money(option.sale_price)} ·
+                                Stock {Number(option.stock || 0)}
                               </Typography>
                             </Box>
 
@@ -1446,11 +1434,6 @@ export default function CreateBill() {
                               textAlign="right"
                               flexShrink={0}
                             >
-                              <Typography fontWeight={800}>
-                                {money(
-                                  option.sale_price
-                                )}
-                              </Typography>
                               <Chip
                                 size="small"
                                 label={stockLabel(
@@ -1489,7 +1472,63 @@ export default function CreateBill() {
                       )}
                     />
                   </Grid>
-                </Grid>
+
+                  <Grid
+                    size={{
+                      xs: 12,
+                      md: 5,
+                    }}
+                  >
+                    <TextField
+                      fullWidth
+                      inputRef={scannerRef}
+                      label="Scan / Enter Barcode"
+                      value={barcode}
+                      onChange={(event) =>
+                        setBarcode(
+                          event.target.value
+                        )
+                      }
+                      onKeyDown={(event) => {
+                        if (
+                          event.key === "Enter"
+                        ) {
+                          event.preventDefault();
+                          addByBarcode();
+                        }
+                      }}
+                      helperText="Scanner: scan and Enter · Manual entry: type barcode and click Add"
+                      InputProps={{
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <QrCodeScannerRoundedIcon />
+                          </InputAdornment>
+                        ),
+                      }}
+                    />
+                  </Grid>
+
+                  <Grid
+                    size={{
+                      xs: 12,
+                      md: 2,
+                    }}
+                  >
+                    <Button
+                      fullWidth
+                      variant="contained"
+                      startIcon={<AddRoundedIcon />}
+                      onClick={addByBarcode}
+                      sx={{
+                        height: 42,
+                        minWidth: 105,
+                        px: 2,
+                        flexShrink: 0,
+                      }}
+                    >
+                      Add
+                    </Button>
+                  </Grid>
 
                 {(recentProducts.length >
                   0 ||
