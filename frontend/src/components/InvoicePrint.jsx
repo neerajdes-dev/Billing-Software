@@ -2,6 +2,7 @@ import { buildUpiPaymentUrl, DEFAULT_UPI_SETTINGS } from "../utils/upi";
 import {
   Box,
   Divider,
+  Stack,
   Table,
   TableBody,
   TableCell,
@@ -54,15 +55,22 @@ function InvoicePrint({
         "/resolvent-logo.jpg"
       : "/resolvent-logo.jpg";
 
-  const upiSettings =
-    typeof window !== "undefined"
-      ? {
-          ...DEFAULT_UPI_SETTINGS,
-          ...(JSON.parse(
-            localStorage.getItem("billing_upi_settings") || "{}"
-          ) || {}),
-        }
-      : DEFAULT_UPI_SETTINGS;
+  const upiSettings = (() => {
+    if (typeof window === "undefined") {
+      return DEFAULT_UPI_SETTINGS;
+    }
+
+    try {
+      return {
+        ...DEFAULT_UPI_SETTINGS,
+        ...(JSON.parse(
+          localStorage.getItem("billing_upi_settings") || "{}"
+        ) || {}),
+      };
+    } catch {
+      return DEFAULT_UPI_SETTINGS;
+    }
+  })();
 
   const shouldShowQr =
     upiSettings.enabled &&
