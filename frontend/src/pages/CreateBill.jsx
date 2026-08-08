@@ -1237,19 +1237,19 @@ export default function CreateBill() {
                           {...params}
                           label="Search Customer"
                           placeholder="Name or mobile"
-                          InputProps={{
-                            ...params.InputProps,
-                            startAdornment: (
-                              <>
-                                <InputAdornment position="start">
-                                  <PersonSearchRoundedIcon fontSize="small" />
-                                </InputAdornment>
-                                {
-                                  params.InputProps
-                                    .startAdornment
-                                }
-                              </>
-                            ),
+                          slotProps={{
+                            ...params.slotProps,
+                            input: {
+                              ...(params.slotProps?.input || {}),
+                              startAdornment: (
+                                <>
+                                  <InputAdornment position="start">
+                                    <PersonSearchRoundedIcon fontSize="small" />
+                                  </InputAdornment>
+                                  {params.slotProps?.input?.startAdornment || null}
+                                </>
+                              ),
+                            },
                           }}
                         />
                       )}
@@ -1468,24 +1468,22 @@ export default function CreateBill() {
                       renderInput={(params) => (
                         <TextField
                           {...params}
-                          inputRef={
-                            productSearchRef
-                          }
+                          inputRef={productSearchRef}
                           label="Search Product by Name"
                           placeholder="Type product name, barcode or batch"
-                          InputProps={{
-                            ...params.InputProps,
-                            startAdornment: (
-                              <>
-                                <InputAdornment position="start">
-                                  <SearchRoundedIcon />
-                                </InputAdornment>
-                                {
-                                  params.InputProps
-                                    .startAdornment
-                                }
-                              </>
-                            ),
+                          slotProps={{
+                            ...params.slotProps,
+                            input: {
+                              ...(params.slotProps?.input || {}),
+                              startAdornment: (
+                                <>
+                                  <InputAdornment position="start">
+                                    <SearchRoundedIcon />
+                                  </InputAdornment>
+                                  {params.slotProps?.input?.startAdornment || null}
+                                </>
+                              ),
+                            },
                           }}
                         />
                       )}
