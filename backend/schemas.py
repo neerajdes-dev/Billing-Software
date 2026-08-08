@@ -83,6 +83,11 @@ class SaleCreate(BaseModel):
     payment_mode: str
     bill_date: str | None = None
     notes: str | None = None
+    discount_amount: float = 0
+    cash_amount: float = 0
+    online_amount: float = 0
+    credit_amount: float = 0
+    amount_received: float = 0
     products: List[SaleProduct]
 class DealerCreate(BaseModel):
     dealer_name: str

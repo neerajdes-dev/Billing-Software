@@ -47,6 +47,13 @@ def run_database_migrations():
         "ALTER TABLE sales ADD COLUMN IF NOT EXISTS bill_date TIMESTAMP",
         "ALTER TABLE sales ADD COLUMN IF NOT EXISTS total_mrp DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE sales ADD COLUMN IF NOT EXISTS total_saving DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE sales ADD COLUMN IF NOT EXISTS discount_amount DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE sales ADD COLUMN IF NOT EXISTS cash_amount DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE sales ADD COLUMN IF NOT EXISTS online_amount DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE sales ADD COLUMN IF NOT EXISTS credit_amount DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE sales ADD COLUMN IF NOT EXISTS amount_received DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE sales ADD COLUMN IF NOT EXISTS change_return DOUBLE PRECISION DEFAULT 0",
+
         "ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS mrp DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS saving DOUBLE PRECISION DEFAULT 0",
     ]
@@ -190,8 +197,8 @@ def validate_item_values(
             detail="Expiry date cannot be before manufacturing date",
         )
 
-@app.api_route("/", methods=["GET", "HEAD"])
-def root():
+@app.get("/")
+def home():
     return {"message": "Resolvent Billing Software API Running"}
 
 
@@ -409,17 +416,38 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
     total_saving = 0.0
     sale_items = []
 
+    if not data.products:
+        raise HTTPException(status_code=400, detail="Add at least one product")
+
     for product in data.products:
         item = db.query(models.Item).filter(models.Item.id == product.item_id).first()
+
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
+
         current_stock = int(item.stock or 0)
-        if current_stock < product.quantity:
-            raise HTTPException(status_code=400, detail=f"Stock not available for {item.item_name}")
+        qty = int(product.quantity or 0)
+
+        if qty <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Quantity must be greater than zero for {item.item_name}",
+            )
+
+        if current_stock < qty:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Stock not available for {item.item_name}",
+            )
+
+        if item.expiry_date and item.expiry_date < date.today():
+            raise HTTPException(
+                status_code=400,
+                detail=f"{item.item_name} is expired and cannot be billed",
+            )
 
         rate = to_float(item.sale_price)
         mrp = max(to_float(item.mrp), rate)
-        qty = int(product.quantity)
         base_amount = rate * qty
         mrp_amount = mrp * qty
         saving = max(mrp_amount - base_amount, 0)
@@ -430,20 +458,82 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
         total_mrp += mrp_amount
         total_saving += saving
         gst_amount += item_gst
-        item.stock = current_stock - qty
-        sale_items.append({
-            "item_id": item.id,
-            "item_name": item.item_name,
-            "quantity": qty,
-            "mrp": mrp,
-            "rate": rate,
-            "gst_percent": item.gst_percent,
-            "amount": line_total,
-            "saving": saving,
-        })
 
-    final_amount = subtotal + gst_amount
+        item.stock = current_stock - qty
+
+        sale_items.append(
+            {
+                "item_id": item.id,
+                "item_name": item.item_name,
+                "quantity": qty,
+                "mrp": mrp,
+                "rate": rate,
+                "gst_percent": item.gst_percent,
+                "amount": line_total,
+                "saving": saving,
+            }
+        )
+
+    gross_total = subtotal + gst_amount
+    discount_amount = max(0.0, min(to_float(data.discount_amount), gross_total))
+    final_amount = max(gross_total - discount_amount, 0.0)
+
+    payment_mode = str(data.payment_mode or "Cash").strip() or "Cash"
+
+    cash_amount = max(0.0, to_float(data.cash_amount))
+    online_amount = max(0.0, to_float(data.online_amount))
+    credit_amount = max(0.0, to_float(data.credit_amount))
+    amount_received = max(0.0, to_float(data.amount_received))
+
+    if payment_mode == "Cash":
+        cash_amount = final_amount
+        online_amount = 0.0
+        credit_amount = 0.0
+    elif payment_mode == "Online":
+        cash_amount = 0.0
+        online_amount = final_amount
+        credit_amount = 0.0
+    elif payment_mode == "Credit":
+        cash_amount = 0.0
+        online_amount = 0.0
+        credit_amount = final_amount
+    elif payment_mode == "Split":
+        split_total = cash_amount + online_amount + credit_amount
+
+        if abs(split_total - final_amount) > 0.01:
+            raise HTTPException(
+                status_code=400,
+                detail="Split payment amounts must equal the final bill amount",
+            )
+
+    if payment_mode == "Credit" and not str(data.customer_name or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Customer name is required for a credit bill",
+        )
+
+    if credit_amount > 0 and not str(data.customer_name or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Customer name is required when a credit amount is used",
+        )
+
+    if payment_mode == "Cash":
+        received_for_change = amount_received if amount_received > 0 else final_amount
+        change_return = max(received_for_change - final_amount, 0.0)
+        amount_received = received_for_change
+    elif payment_mode == "Split":
+        amount_received = cash_amount + online_amount
+        change_return = 0.0
+    elif payment_mode == "Online":
+        amount_received = final_amount
+        change_return = 0.0
+    else:
+        amount_received = 0.0
+        change_return = 0.0
+
     selected_bill_date = datetime.now()
+
     if data.bill_date:
         try:
             selected_bill_date = datetime.strptime(data.bill_date, "%Y-%m-%d")
@@ -451,29 +541,56 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
             raise HTTPException(status_code=400, detail="Invalid bill date") from exc
 
     sale = models.Sale(
-        invoice_no=generate_invoice_no(), customer_name=data.customer_name,
-        customer_mobile=data.customer_mobile, subtotal=subtotal,
-        total_mrp=total_mrp, total_saving=total_saving,
-        gst_amount=gst_amount, final_amount=final_amount,
-        payment_mode=data.payment_mode, bill_date=selected_bill_date,
+        invoice_no=generate_invoice_no(),
+        customer_name=data.customer_name,
+        customer_mobile=data.customer_mobile,
+        subtotal=subtotal,
+        total_mrp=total_mrp,
+        total_saving=total_saving,
+        gst_amount=gst_amount,
+        discount_amount=discount_amount,
+        final_amount=final_amount,
+        payment_mode=payment_mode,
+        cash_amount=cash_amount,
+        online_amount=online_amount,
+        credit_amount=credit_amount,
+        amount_received=amount_received,
+        change_return=change_return,
+        bill_date=selected_bill_date,
         created_at=selected_bill_date,
     )
+
     db.add(sale)
     db.flush()
+
     for row in sale_items:
         db.add(models.SaleItem(sale_id=sale.id, **row))
+
     db.commit()
     db.refresh(sale)
+
     return {
-        "message": "Bill generated successfully", "invoice_no": sale.invoice_no,
-        "sale_id": sale.id, "customer_name": sale.customer_name,
-        "customer_mobile": sale.customer_mobile, "subtotal": round(subtotal, 2),
-        "total_mrp": round(total_mrp, 2), "total_saving": round(total_saving, 2),
-        "gst_amount": round(gst_amount, 2), "final_amount": round(final_amount, 2),
+        "message": "Bill generated successfully",
+        "invoice_no": sale.invoice_no,
+        "sale_id": sale.id,
+        "customer_name": sale.customer_name,
+        "customer_mobile": sale.customer_mobile,
+        "subtotal": round(subtotal, 2),
+        "total_mrp": round(total_mrp, 2),
+        "total_saving": round(total_saving, 2),
+        "gst_amount": round(gst_amount, 2),
+        "discount_amount": round(discount_amount, 2),
+        "final_amount": round(final_amount, 2),
         "payment_mode": sale.payment_mode,
+        "cash_amount": round(cash_amount, 2),
+        "online_amount": round(online_amount, 2),
+        "credit_amount": round(credit_amount, 2),
+        "amount_received": round(amount_received, 2),
+        "change_return": round(change_return, 2),
         "bill_date": sale.bill_date.strftime("%Y-%m-%d") if sale.bill_date else None,
         "items": sale_items,
     }
+
 
 
 @app.get("/sales")
