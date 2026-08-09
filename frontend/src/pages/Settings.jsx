@@ -630,6 +630,16 @@ export default function Settings() {
                 ))}
               </Grid>
 
+              {printSettings.layout === "thermal" && (
+                <Alert severity="info" sx={{ mt: 2 }}>
+                  Receipt length is calculated automatically from the actual
+                  invoice content, including product count, totals, QR and footer.
+                  In Chrome/Edge Print → More settings, turn OFF
+                  "Headers and footers" to prevent the browser date and website URL
+                  from printing above or below the receipt.
+                </Alert>
+              )}
+
               <TextField
                 fullWidth
                 multiline
@@ -658,7 +668,7 @@ export default function Settings() {
           <CardContent sx={{ p: 3 }}>
             <Typography variant="h6">Live Invoice Preview</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 2.5 }}>
-              Changes appear here instantly before saving.
+              This preview now uses the exact same invoice renderer as the final print.
             </Typography>
             <PrintDesignerPreview
               business={business}

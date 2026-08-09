@@ -176,6 +176,7 @@ function ThermalInvoice({
   printSettings,
   businessLogo,
   upiSettings,
+  preview = false,
 }) {
   const thermalSize = printSettings.thermal_size || "80mm";
   const is58 = thermalSize === "58mm";
@@ -230,7 +231,7 @@ function ThermalInvoice({
 
   return (
     <Box
-      className="invoice-print-area invoice-thermal"
+      className={`${preview ? "invoice-preview-area" : "invoice-print-area"} invoice-thermal`}
       data-thermal-size={thermalSize}
       sx={{
         width: thermalSize,
@@ -496,8 +497,10 @@ function ThermalInvoice({
                   sx={{
                     width: is58 ? "51%" : "55%",
                     pr: 0.4,
-                    fontSize: font,
-                    fontWeight: 800,
+                    fontSize: is58 ? 10.4 : 11.2,
+                    fontWeight: 900,
+                    lineHeight: 1.12,
+                    letterSpacing: "0.01em",
                     overflowWrap: "anywhere",
                   }}
                 >
@@ -831,6 +834,7 @@ function A4Invoice({
   printSettings,
   businessLogo,
   upiSettings,
+  preview = false,
 }) {
   const showLogo = printSettings.show_logo !== false;
   const showBarcode = printSettings.show_barcode !== false;
@@ -873,7 +877,7 @@ function A4Invoice({
 
   return (
     <Box
-      className="invoice-print-area invoice-a4"
+      className={`${preview ? "invoice-preview-area" : "invoice-print-area"} invoice-a4`}
       sx={{
         bgcolor: "#fff",
         color: "#000",
@@ -1157,16 +1161,21 @@ export default function InvoicePrint({
   customer = {},
   items = [],
   printSettings = {},
+  preview = false,
+  businessLogoOverride = "",
+  upiSettingsOverride = null,
 }) {
   const layout = printSettings.layout || "a4";
 
   const businessLogo =
-    typeof window !== "undefined"
+    businessLogoOverride ||
+    (typeof window !== "undefined"
       ? localStorage.getItem("billing_business_logo") ||
         "/resolvent-logo.jpg"
-      : "/resolvent-logo.jpg";
+      : "/resolvent-logo.jpg");
 
-  const upiSettings = getUpiSettings();
+  const upiSettings =
+    upiSettingsOverride || getUpiSettings();
 
   if (layout === "thermal") {
     return (
@@ -1178,6 +1187,7 @@ export default function InvoicePrint({
         printSettings={printSettings}
         businessLogo={businessLogo}
         upiSettings={upiSettings}
+        preview={preview}
       />
     );
   }
@@ -1191,6 +1201,7 @@ export default function InvoicePrint({
       printSettings={printSettings}
       businessLogo={businessLogo}
       upiSettings={upiSettings}
+      preview={preview}
     />
   );
 }
