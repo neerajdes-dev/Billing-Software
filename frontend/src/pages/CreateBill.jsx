@@ -774,7 +774,7 @@ export default function CreateBill() {
     return "";
   };
 
-  const generateBill = async () => {
+  const generateBill = async ({ printAfter = false } = {}) => {
     if (!cart.length) {
       setMessage({
         type: "warning",
@@ -984,6 +984,12 @@ export default function CreateBill() {
       });
 
       scannerRef.current?.focus();
+
+      if (printAfter) {
+        setTimeout(() => {
+          window.print();
+        }, 500);
+      }
     } catch (error) {
       setMessage({
         type: "error",
@@ -1143,6 +1149,36 @@ export default function CreateBill() {
       type: "",
       text: "",
     });
+  };
+
+  const startNewBill = () => {
+    setGeneratedInvoice(null);
+    setCart([]);
+    setCustomer({
+      customer_name: "",
+      customer_mobile: "",
+    });
+    setSelectedCustomer(null);
+    setSelectedProduct(null);
+    setBarcode("");
+    setPaymentMode("Cash");
+    setBillDate(todayValue());
+    setDiscountType("amount");
+    setDiscountValue("");
+    setAmountReceived("");
+    setSplitPayment({
+      cash: "",
+      online: "",
+      credit: "",
+    });
+    setMessage({
+      type: "",
+      text: "",
+    });
+
+    setTimeout(() => {
+      productSearchRef.current?.focus?.();
+    }, 100);
   };
 
   const handlePrintInvoice = () => {
@@ -2388,23 +2424,35 @@ export default function CreateBill() {
                     </Stack>
                   </Paper>
 
-                  <Button
-                    fullWidth
-                    size="large"
-                    variant="contained"
-                    startIcon={
-                      <ReceiptLongRoundedIcon />
-                    }
-                    onClick={generateBill}
-                    disabled={
-                      saving ||
-                      !cart.length
-                    }
-                  >
-                    {saving
-                      ? "Generating..."
-                      : "Generate Invoice (F5)"}
-                  </Button>
+                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                    <Button
+                      fullWidth
+                      size="large"
+                      variant="contained"
+                      startIcon={<ReceiptLongRoundedIcon />}
+                      onClick={() => generateBill()}
+                      disabled={saving || !cart.length}
+                    >
+                      {saving
+                        ? "Generating..."
+                        : "Generate Invoice"}
+                    </Button>
+
+                    <Button
+                      fullWidth
+                      size="large"
+                      variant="outlined"
+                      startIcon={<PrintRoundedIcon />}
+                      onClick={() =>
+                        generateBill({
+                          printAfter: true,
+                        })
+                      }
+                      disabled={saving || !cart.length}
+                    >
+                      Generate & Print
+                    </Button>
+                  </Stack>
 
                   {generatedInvoice && (
                     <>
@@ -2444,26 +2492,30 @@ export default function CreateBill() {
                         </MenuItem>
                       </TextField>
 
-                      <Button
-                        fullWidth
-                        color="success"
-                        variant="contained"
-                        startIcon={
-                          <PrintRoundedIcon />
-                        }
-                        onClick={
-                          handlePrintInvoice
-                        }
-                      >
-                        Print Last Invoice
-                      </Button>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                        <Button
+                          fullWidth
+                          color="success"
+                          variant="contained"
+                          startIcon={<PrintRoundedIcon />}
+                          onClick={handlePrintInvoice}
+                        >
+                          Print Invoice
+                        </Button>
+
+                        <Button
+                          fullWidth
+                          variant="outlined"
+                          onClick={startNewBill}
+                        >
+                          New Bill
+                        </Button>
+                      </Stack>
 
                       <Alert severity="success">
-                        Last invoice:{" "}
-                        {
-                          generatedInvoice.invoice_number
-                        }{" "}
-                        ·{" "}
+                        Invoice{" "}
+                        {generatedInvoice.invoice_number}{" "}
+                        generated ·{" "}
                         {money(
                           generatedInvoice.total_amount
                         )}

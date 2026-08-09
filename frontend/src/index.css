@@ -28,10 +28,8 @@ textarea {
   html,
   body,
   #root {
-    width: 100%;
-    min-height: 100%;
-    margin: 0;
-    padding: 0;
+    margin: 0 !important;
+    padding: 0 !important;
     background: #ffffff !important;
   }
 
@@ -47,37 +45,43 @@ textarea {
   .invoice-print-area {
     display: block !important;
     position: absolute !important;
-    left: 0;
-    top: 0;
+    left: 0 !important;
+    top: 0 !important;
     margin: 0 !important;
     background: #ffffff !important;
     color: #000000 !important;
-    z-index: 99999;
     box-shadow: none !important;
+    overflow: visible !important;
+    z-index: 99999 !important;
   }
 
   .invoice-a4 {
-    width: 100% !important;
-    min-height: 100vh;
-    padding: 8mm !important;
+    width: 210mm !important;
+    min-height: 297mm !important;
+    padding: 10mm !important;
+    page: invoiceA4;
   }
 
   .invoice-thermal {
-    min-height: auto !important;
-    padding: 2mm !important;
-    overflow: visible !important;
+    min-height: 0 !important;
+    height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
   }
 
   .invoice-thermal[data-thermal-size="58mm"] {
     width: 58mm !important;
+    page: thermal58;
   }
 
   .invoice-thermal[data-thermal-size="80mm"] {
     width: 80mm !important;
+    page: thermal80;
   }
 
   .invoice-thermal[data-thermal-size="88mm"] {
     width: 88mm !important;
+    page: thermal88;
   }
 
   .invoice-print-area table {
@@ -93,11 +97,23 @@ textarea {
     display: none !important;
   }
 
-  @page {
-    margin: 5mm;
+  @page invoiceA4 {
+    size: A4 portrait;
+    margin: 0;
   }
 
-  .invoice-a4 {
-    page: invoiceA4;
+  @page thermal58 {
+    size: 58mm auto;
+    margin: 0;
+  }
+
+  @page thermal80 {
+    size: 80mm auto;
+    margin: 0;
+  }
+
+  @page thermal88 {
+    size: 88mm auto;
+    margin: 0;
   }
 }

@@ -25,6 +25,8 @@ import TrendingUpRoundedIcon from "@mui/icons-material/TrendingUpRounded";
 import TrendingDownRoundedIcon from "@mui/icons-material/TrendingDownRounded";
 import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
 import EventBusyRoundedIcon from "@mui/icons-material/EventBusyRounded";
+import QrCode2RoundedIcon from "@mui/icons-material/QrCode2Rounded";
+import PrintRoundedIcon from "@mui/icons-material/PrintRounded";
 import AppLayout from "../components/AppLayout";
 import PageHeader from "../components/PageHeader";
 import {
@@ -401,6 +403,73 @@ const expiryStatus = (item) => {
   return { label: "Safe", color: "success", daysRemaining };
 };
 
+
+const CODE39_PATTERNS = {
+  "0": "nnnwwnwnn",
+  "1": "wnnwnnnnw",
+  "2": "nnwwnnnnw",
+  "3": "wnwwnnnnn",
+  "4": "nnnwwnnnw",
+  "5": "wnnwwnnnn",
+  "6": "nnwwwnnnn",
+  "7": "nnnwnnwnw",
+  "8": "wnnwnnwnn",
+  "9": "nnwwnnwnn",
+  "*": "nwnnwnwnn",
+};
+
+const buildStoreBarcode = (itemId) =>
+  `200${String(itemId || Date.now() % 1000000000).padStart(9, "0")}`;
+
+const code39Svg = (value, height = 56) => {
+  const content = `*${String(value || "").replace(/[^0-9]/g, "")}*`;
+  const narrow = 2;
+  const wide = 5;
+  const gap = 2;
+  let x = 10;
+  const bars = [];
+
+  for (const char of content) {
+    const pattern = CODE39_PATTERNS[char];
+    if (!pattern) continue;
+
+    pattern.split("").forEach((unit, index) => {
+      const width = unit === "w" ? wide : narrow;
+
+      if (index % 2 === 0) {
+        bars.push(
+          `<rect x="${x}" y="0" width="${width}" height="${height}" fill="#000"/>`
+        );
+      }
+
+      x += width;
+    });
+
+    x += gap;
+  }
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg"
+      width="${x + 10}" height="${height + 20}"
+      viewBox="0 0 ${x + 10} ${height + 20}">
+      <rect width="100%" height="100%" fill="#fff"/>
+      ${bars.join("")}
+      <text x="${(x + 10) / 2}" y="${height + 15}"
+        text-anchor="middle"
+        font-family="Arial, sans-serif"
+        font-size="11">${value}</text>
+    </svg>
+  `;
+
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+};
+
+const labelSizeMap = {
+  "50x25": { width: 50, height: 25, name: "50 × 25 mm" },
+  "40x25": { width: 40, height: 25, name: "40 × 25 mm" },
+  "25x15": { width: 25, height: 15, name: "25 × 15 mm" },
+};
+
 export default function Items() {
   const [items, setItems] = useState([]);
   const [search, setSearch] = useState("");
@@ -409,6 +478,12 @@ export default function Items() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
+
+  const [barcodeDialogOpen, setBarcodeDialogOpen] = useState(false);
+  const [barcodeItemId, setBarcodeItemId] = useState("");
+  const [barcodeLabelQty, setBarcodeLabelQty] = useState(10);
+  const [barcodeLabelSize, setBarcodeLabelSize] = useState("50x25");
+  const [barcodeSaving, setBarcodeSaving] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
   const [bulkRows, setBulkRows] = useState([]);
@@ -1404,6 +1479,236 @@ export default function Items() {
     },
   ];
 
+  const barcodeItem = useMemo(
+    () =>
+      items.find(
+        (item) => String(item.id) === String(barcodeItemId)
+      ) || null,
+    [items, barcodeItemId]
+  );
+
+  const openBarcodeManager = () => {
+    const firstItem =
+      items.find((item) => !item.barcode) || items[0] || null;
+
+    setBarcodeItemId(firstItem ? String(firstItem.id) : "");
+    setBarcodeLabelQty(10);
+    setBarcodeLabelSize("50x25");
+    setBarcodeDialogOpen(true);
+  };
+
+  const generateBarcodeForSelectedItem = async () => {
+    if (!barcodeItem) {
+      setMessage({
+        type: "warning",
+        text: "Select a product first.",
+      });
+      return;
+    }
+
+    if (barcodeItem.barcode) {
+      setMessage({
+        type: "info",
+        text: `${barcodeItem.item_name} already has barcode ${barcodeItem.barcode}. The same barcode will be reused.`,
+      });
+      return;
+    }
+
+    const generatedBarcode = buildStoreBarcode(barcodeItem.id);
+
+    try {
+      setBarcodeSaving(true);
+
+      await updateItem(barcodeItem.id, {
+        item_name: barcodeItem.item_name,
+        barcode: generatedBarcode,
+        purchase_price: Number(barcodeItem.purchase_price || 0),
+        mrp: Number(barcodeItem.mrp || 0),
+        sale_price: Number(barcodeItem.sale_price || 0),
+        gst_percent: Number(barcodeItem.gst_percent || 0),
+        stock: Number(barcodeItem.stock || 0),
+        minimum_stock: Number(barcodeItem.minimum_stock || 0),
+        expiry_alert_days: Number(barcodeItem.expiry_alert_days || 30),
+        batch_number: barcodeItem.batch_number || null,
+        manufacturing_date: barcodeItem.manufacturing_date || null,
+        expiry_date: barcodeItem.expiry_date || null,
+      });
+
+      setItems((current) =>
+        current.map((item) =>
+          item.id === barcodeItem.id
+            ? {
+                ...item,
+                barcode: generatedBarcode,
+              }
+            : item
+        )
+      );
+
+      setMessage({
+        type: "success",
+        text: `Barcode ${generatedBarcode} generated and permanently saved for ${barcodeItem.item_name}.`,
+      });
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: error.message || "Unable to generate barcode.",
+      });
+    } finally {
+      setBarcodeSaving(false);
+    }
+  };
+
+  const printBarcodeLabels = () => {
+    if (!barcodeItem) {
+      setMessage({
+        type: "warning",
+        text: "Select a product first.",
+      });
+      return;
+    }
+
+    if (!barcodeItem.barcode) {
+      setMessage({
+        type: "warning",
+        text: "Generate and save the barcode before printing labels.",
+      });
+      return;
+    }
+
+    const quantity = Math.max(
+      1,
+      Math.min(500, Number(barcodeLabelQty || 1))
+    );
+
+    const size =
+      labelSizeMap[barcodeLabelSize] ||
+      labelSizeMap["50x25"];
+
+    const barcodeImage = code39Svg(barcodeItem.barcode);
+
+    const safeName = String(barcodeItem.item_name || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+    const labels = Array.from({ length: quantity })
+      .map(
+        () => `
+          <div class="label">
+            <div class="name">${safeName}</div>
+            <img src="${barcodeImage}" />
+            <div class="price">
+              MRP ₹${Number(barcodeItem.mrp || 0).toFixed(2)}
+              &nbsp; Sale ₹${Number(barcodeItem.sale_price || 0).toFixed(2)}
+            </div>
+            ${
+              barcodeItem.batch_number
+                ? `<div class="meta">Batch: ${String(
+                    barcodeItem.batch_number
+                  )}</div>`
+                : ""
+            }
+            ${
+              barcodeItem.expiry_date
+                ? `<div class="meta">Exp: ${String(
+                    barcodeItem.expiry_date
+                  ).slice(0, 10)}</div>`
+                : ""
+            }
+          </div>
+        `
+      )
+      .join("");
+
+    const printWindow = window.open(
+      "",
+      "_blank",
+      "width=900,height=700"
+    );
+
+    if (!printWindow) {
+      setMessage({
+        type: "error",
+        text: "Popup blocked. Allow popups to print barcode labels.",
+      });
+      return;
+    }
+
+    printWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <title>Barcode Labels - ${safeName}</title>
+          <style>
+            * { box-sizing: border-box; }
+            html, body {
+              margin: 0;
+              padding: 0;
+              background: #fff;
+              font-family: Arial, sans-serif;
+            }
+            .sheet {
+              display: flex;
+              flex-wrap: wrap;
+              align-content: flex-start;
+            }
+            .label {
+              width: ${size.width}mm;
+              height: ${size.height}mm;
+              padding: 1.2mm;
+              overflow: hidden;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              page-break-inside: avoid;
+              border: 0.2mm solid #ddd;
+            }
+            .name {
+              width: 100%;
+              text-align: center;
+              font-size: ${barcodeLabelSize === "25x15" ? 6.5 : 8}px;
+              font-weight: 700;
+              white-space: nowrap;
+              overflow: hidden;
+              text-overflow: ellipsis;
+              margin-bottom: 0.5mm;
+            }
+            img {
+              width: 94%;
+              max-height: ${barcodeLabelSize === "25x15" ? 8 : 12}mm;
+              object-fit: contain;
+            }
+            .price {
+              font-size: ${barcodeLabelSize === "25x15" ? 5.5 : 7}px;
+              font-weight: 700;
+              white-space: nowrap;
+              margin-top: 0.2mm;
+            }
+            .meta {
+              font-size: 5.5px;
+              line-height: 1.1;
+              white-space: nowrap;
+            }
+            @page { margin: 0; }
+            @media print {
+              .label { border-color: transparent; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="sheet">${labels}</div>
+          <script>
+            window.onload = () => window.print();
+          </script>
+        </body>
+      </html>
+    `);
+
+    printWindow.document.close();
+  };
+
   const cards = [
     ["Total products", summary.products, "Active inventory records"],
     ["Total stock", summary.totalStock, "Units currently available"],
@@ -1479,6 +1784,15 @@ export default function Items() {
         </MenuItem>
       </Menu>
 
+      <Button
+        variant="outlined"
+        startIcon={<QrCode2RoundedIcon />}
+        onClick={openBarcodeManager}
+        disabled={!items.length}
+      >
+        Barcode & Labels
+      </Button>
+
       <Button variant="outlined" startIcon={<FileDownloadRoundedIcon />} onClick={exportInventory} disabled={!filtered.length}>Export Excel</Button>
       <Button variant="outlined" startIcon={<RefreshRoundedIcon />} onClick={() => load()} disabled={loading}>Refresh</Button>
       <input hidden ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={importFile} />
@@ -1532,6 +1846,180 @@ export default function Items() {
       }}
     /></CardContent></Card>
 
+
+
+    <Dialog
+      open={barcodeDialogOpen}
+      onClose={() => setBarcodeDialogOpen(false)}
+      fullWidth
+      maxWidth="sm"
+    >
+      <DialogTitle>Barcode & Label Management</DialogTitle>
+
+      <DialogContent dividers>
+        <Stack spacing={2}>
+          <Alert severity="info">
+            Generate once and reuse forever. If a product already has a barcode, future label printing uses the same barcode.
+          </Alert>
+
+          <TextField
+            select
+            label="Product"
+            value={barcodeItemId}
+            onChange={(event) =>
+              setBarcodeItemId(event.target.value)
+            }
+          >
+            {items.map((item) => (
+              <MenuItem
+                key={item.id}
+                value={String(item.id)}
+              >
+                {item.item_name}
+                {item.barcode
+                  ? ` — ${item.barcode}`
+                  : " — No barcode"}
+              </MenuItem>
+            ))}
+          </TextField>
+
+          {barcodeItem && (
+            <Card variant="outlined">
+              <CardContent>
+                <Stack spacing={1}>
+                  <Typography fontWeight={800}>
+                    {barcodeItem.item_name}
+                  </Typography>
+
+                  <Stack
+                    direction={{ xs: "column", sm: "row" }}
+                    spacing={2}
+                    alignItems={{ sm: "center" }}
+                  >
+                    <Box
+                      component="img"
+                      src={
+                        barcodeItem.barcode
+                          ? code39Svg(barcodeItem.barcode)
+                          : code39Svg(
+                              buildStoreBarcode(barcodeItem.id)
+                            )
+                      }
+                      alt="Barcode Preview"
+                      sx={{
+                        width: 230,
+                        maxWidth: "100%",
+                        height: 82,
+                        objectFit: "contain",
+                        bgcolor: "#fff",
+                        border: "1px solid",
+                        borderColor: "divider",
+                        p: 0.5,
+                      }}
+                    />
+
+                    <Box>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                      >
+                        Barcode
+                      </Typography>
+
+                      <Typography
+                        variant="h6"
+                        fontWeight={900}
+                      >
+                        {barcodeItem.barcode ||
+                          buildStoreBarcode(barcodeItem.id)}
+                      </Typography>
+
+                      <Chip
+                        size="small"
+                        sx={{ mt: 0.5 }}
+                        color={
+                          barcodeItem.barcode
+                            ? "success"
+                            : "warning"
+                        }
+                        label={
+                          barcodeItem.barcode
+                            ? "Existing barcode — reused"
+                            : "Preview — generate to save"
+                        }
+                      />
+                    </Box>
+                  </Stack>
+                </Stack>
+              </CardContent>
+            </Card>
+          )}
+
+          <Grid container spacing={1.5}>
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <TextField
+                type="number"
+                label="Label Quantity"
+                value={barcodeLabelQty}
+                onChange={(event) =>
+                  setBarcodeLabelQty(event.target.value)
+                }
+                inputProps={{ min: 1, max: 500 }}
+              />
+            </Grid>
+
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <TextField
+                select
+                label="Label Size"
+                value={barcodeLabelSize}
+                onChange={(event) =>
+                  setBarcodeLabelSize(event.target.value)
+                }
+              >
+                {Object.entries(labelSizeMap).map(
+                  ([key, option]) => (
+                    <MenuItem key={key} value={key}>
+                      {option.name}
+                    </MenuItem>
+                  )
+                )}
+              </TextField>
+            </Grid>
+          </Grid>
+        </Stack>
+      </DialogContent>
+
+      <DialogActions>
+        <Button
+          onClick={() => setBarcodeDialogOpen(false)}
+        >
+          Close
+        </Button>
+
+        {barcodeItem && !barcodeItem.barcode && (
+          <Button
+            variant="outlined"
+            startIcon={<QrCode2RoundedIcon />}
+            onClick={generateBarcodeForSelectedItem}
+            disabled={barcodeSaving}
+          >
+            {barcodeSaving
+              ? "Saving..."
+              : "Generate & Save"}
+          </Button>
+        )}
+
+        <Button
+          variant="contained"
+          startIcon={<PrintRoundedIcon />}
+          onClick={printBarcodeLabels}
+          disabled={!barcodeItem?.barcode}
+        >
+          Print Labels
+        </Button>
+      </DialogActions>
+    </Dialog>
 
 
     <Dialog
