@@ -24,6 +24,22 @@ textarea {
   display: none;
 }
 
+.invoice-preview-area {
+  display: block;
+  background: #ffffff;
+  color: #000000;
+}
+
+.invoice-preview-area.invoice-thermal {
+  min-height: 0;
+  height: auto;
+}
+
+.invoice-preview-area.invoice-a4 {
+  width: 210mm;
+  min-height: 297mm;
+}
+
 @media print {
   html,
   body,
@@ -31,6 +47,7 @@ textarea {
     margin: 0 !important;
     padding: 0 !important;
     background: #ffffff !important;
+    min-height: 0 !important;
   }
 
   body * {
@@ -103,17 +120,17 @@ textarea {
   }
 
   @page thermal58 {
-    size: 58mm auto;
+    size: 58mm 300mm;
     margin: 0;
   }
 
   @page thermal80 {
-    size: 80mm auto;
+    size: 80mm 300mm;
     margin: 0;
   }
 
   @page thermal88 {
-    size: 88mm auto;
+    size: 88mm 300mm;
     margin: 0;
   }
 }
