@@ -131,6 +131,94 @@ const makeHeldBillId = () =>
     .slice(2, 7)
     .toUpperCase()}`;
 
+
+function QuickProductCard({ item, icon, onAdd }) {
+  return (
+    <Tooltip title={item.item_name || ""} arrow>
+      <Paper
+        variant="outlined"
+        onClick={() => onAdd(item)}
+        sx={{
+          p: 1.25,
+          minWidth: 0,
+          cursor: "pointer",
+          borderRadius: 2.5,
+          transition:
+            "border-color .18s ease, box-shadow .18s ease, transform .18s ease",
+          "&:hover": {
+            borderColor: "primary.main",
+            boxShadow:
+              "0 6px 18px rgba(37, 99, 235, 0.10)",
+            transform: "translateY(-1px)",
+          },
+        }}
+      >
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="flex-start"
+        >
+          <Box
+            sx={{
+              width: 30,
+              height: 30,
+              flexShrink: 0,
+              borderRadius: 2,
+              bgcolor: "primary.light",
+              color: "primary.main",
+              display: "grid",
+              placeItems: "center",
+            }}
+          >
+            {icon}
+          </Box>
+
+          <Box sx={{ minWidth: 0, flex: 1 }}>
+            <Typography
+              fontWeight={800}
+              variant="body2"
+              sx={{
+                lineHeight: 1.25,
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+                minHeight: 35,
+              }}
+            >
+              {item.item_name || "Unnamed Product"}
+            </Typography>
+
+            <Stack
+              direction="row"
+              justifyContent="space-between"
+              spacing={1}
+              sx={{ mt: 0.75 }}
+            >
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                noWrap
+              >
+                Stock {Number(item.stock || 0)}
+              </Typography>
+
+              <Typography
+                variant="caption"
+                fontWeight={800}
+                color="primary.main"
+                noWrap
+              >
+                {money(item.sale_price)}
+              </Typography>
+            </Stack>
+          </Box>
+        </Stack>
+      </Paper>
+    </Tooltip>
+  );
+}
+
 export default function CreateBill() {
   const scannerRef = useRef(null);
   const productSearchRef = useRef(null);
@@ -1531,17 +1619,14 @@ export default function CreateBill() {
                   </Grid>
                 </Grid>
 
-                {(recentProducts.length >
-                  0 ||
-                  frequentProducts.length >
-                    0) && (
+                {(recentProducts.length > 0 ||
+                  frequentProducts.length > 0) && (
                   <Grid
                     container
                     spacing={2}
                     sx={{ mt: 1 }}
                   >
-                    {recentProducts.length >
-                      0 && (
+                    {recentProducts.length > 0 && (
                       <Grid
                         size={{
                           xs: 12,
@@ -1550,53 +1635,70 @@ export default function CreateBill() {
                       >
                         <Paper
                           variant="outlined"
-                          sx={{ p: 1.5 }}
+                          sx={{
+                            p: 1.5,
+                            height: "100%",
+                          }}
                         >
                           <Stack
                             direction="row"
                             alignItems="center"
+                            justifyContent="space-between"
                             spacing={1}
-                            mb={1}
+                            mb={1.25}
                           >
-                            <HistoryRoundedIcon
-                              fontSize="small"
-                              color="primary"
-                            />
-                            <Typography fontWeight={800}>
-                              Recent Products
+                            <Stack
+                              direction="row"
+                              alignItems="center"
+                              spacing={1}
+                            >
+                              <HistoryRoundedIcon
+                                fontSize="small"
+                                color="primary"
+                              />
+                              <Typography fontWeight={800}>
+                                Recent Products
+                              </Typography>
+                            </Stack>
+
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                            >
+                              Click to add
                             </Typography>
                           </Stack>
 
-                          <Stack
-                            direction="row"
-                            spacing={1}
-                            useFlexGap
-                            flexWrap="wrap"
+                          <Box
+                            sx={{
+                              display: "grid",
+                              gridTemplateColumns: {
+                                xs: "1fr",
+                                sm: "repeat(2, minmax(0, 1fr))",
+                              },
+                              gap: 1,
+                            }}
                           >
-                            {recentProducts.map(
-                              (item) => (
-                                <Chip
+                            {recentProducts
+                              .slice(0, 6)
+                              .map((item) => (
+                                <QuickProductCard
                                   key={item.id}
-                                  clickable
-                                  label={
-                                    item.item_name
+                                  item={item}
+                                  icon={
+                                    <HistoryRoundedIcon
+                                      sx={{ fontSize: 17 }}
+                                    />
                                   }
-                                  onClick={() =>
-                                    addProductToCart(
-                                      item
-                                    )
-                                  }
-                                  variant="outlined"
+                                  onAdd={addProductToCart}
                                 />
-                              )
-                            )}
-                          </Stack>
+                              ))}
+                          </Box>
                         </Paper>
                       </Grid>
                     )}
 
-                    {frequentProducts.length >
-                      0 && (
+                    {frequentProducts.length > 0 && (
                       <Grid
                         size={{
                           xs: 12,
@@ -1605,47 +1707,65 @@ export default function CreateBill() {
                       >
                         <Paper
                           variant="outlined"
-                          sx={{ p: 1.5 }}
+                          sx={{
+                            p: 1.5,
+                            height: "100%",
+                          }}
                         >
                           <Stack
                             direction="row"
                             alignItems="center"
+                            justifyContent="space-between"
                             spacing={1}
-                            mb={1}
+                            mb={1.25}
                           >
-                            <LocalFireDepartmentRoundedIcon
-                              fontSize="small"
-                              color="warning"
-                            />
-                            <Typography fontWeight={800}>
-                              Frequently Sold
+                            <Stack
+                              direction="row"
+                              alignItems="center"
+                              spacing={1}
+                            >
+                              <LocalFireDepartmentRoundedIcon
+                                fontSize="small"
+                                color="warning"
+                              />
+                              <Typography fontWeight={800}>
+                                Frequently Sold
+                              </Typography>
+                            </Stack>
+
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                            >
+                              Click to add
                             </Typography>
                           </Stack>
 
-                          <Stack
-                            direction="row"
-                            spacing={1}
-                            useFlexGap
-                            flexWrap="wrap"
+                          <Box
+                            sx={{
+                              display: "grid",
+                              gridTemplateColumns: {
+                                xs: "1fr",
+                                sm: "repeat(2, minmax(0, 1fr))",
+                              },
+                              gap: 1,
+                            }}
                           >
-                            {frequentProducts.map(
-                              (item) => (
-                                <Chip
+                            {frequentProducts
+                              .slice(0, 6)
+                              .map((item) => (
+                                <QuickProductCard
                                   key={item.id}
-                                  clickable
-                                  label={
-                                    item.item_name
+                                  item={item}
+                                  icon={
+                                    <LocalFireDepartmentRoundedIcon
+                                      sx={{ fontSize: 17 }}
+                                    />
                                   }
-                                  onClick={() =>
-                                    addProductToCart(
-                                      item
-                                    )
-                                  }
-                                  variant="outlined"
+                                  onAdd={addProductToCart}
                                 />
-                              )
-                            )}
-                          </Stack>
+                              ))}
+                          </Box>
                         </Paper>
                       </Grid>
                     )}
