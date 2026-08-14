@@ -590,6 +590,12 @@ function ThermalInvoice({
           discount > 0
             ? ["Bill Discount", `-${plainMoney(discount)}`]
             : null,
+          Number(invoice.loyalty_discount || 0) > 0
+            ? [
+                "Loyalty Discount",
+                `-${plainMoney(invoice.loyalty_discount)}`,
+              ]
+            : null,
           ["Round Off", plainMoney(roundOff)],
         ]
           .filter(Boolean)
@@ -695,6 +701,97 @@ function ThermalInvoice({
       >
         Amount in words: {amountInWords(grandTotal)}
       </Typography>
+
+      {(Number(invoice.loyalty_points_earned || 0) > 0 ||
+        Number(invoice.loyalty_points_redeemed || 0) > 0) && (
+        <Box
+          sx={{
+            borderTop: "1px dashed #000",
+            borderBottom: "1px dashed #000",
+            py: 0.55,
+            my: 0.55,
+          }}
+        >
+          {Number(invoice.loyalty_points_earned || 0) > 0 && (
+            <Stack
+              direction="row"
+              justifyContent="space-between"
+            >
+              <Typography
+                sx={{
+                  fontSize: small,
+                  fontWeight: 800,
+                }}
+              >
+                Loyalty Earned
+              </Typography>
+              <Typography
+                sx={{
+                  fontSize: small,
+                  fontWeight: 900,
+                }}
+              >
+                +{Number(
+                  invoice.loyalty_points_earned || 0
+                ).toFixed(2)} pts
+              </Typography>
+            </Stack>
+          )}
+
+          {Number(invoice.loyalty_points_redeemed || 0) > 0 && (
+            <Stack
+              direction="row"
+              justifyContent="space-between"
+            >
+              <Typography
+                sx={{
+                  fontSize: small,
+                  fontWeight: 800,
+                }}
+              >
+                Loyalty Redeemed
+              </Typography>
+              <Typography
+                sx={{
+                  fontSize: small,
+                  fontWeight: 900,
+                }}
+              >
+                -{Number(
+                  invoice.loyalty_points_redeemed || 0
+                ).toFixed(2)} pts
+              </Typography>
+            </Stack>
+          )}
+
+          {invoice.loyalty_balance !== null &&
+            invoice.loyalty_balance !== undefined && (
+            <Stack
+              direction="row"
+              justifyContent="space-between"
+            >
+              <Typography
+                sx={{
+                  fontSize: small,
+                  fontWeight: 800,
+                }}
+              >
+                Points Balance
+              </Typography>
+              <Typography
+                sx={{
+                  fontSize: small,
+                  fontWeight: 900,
+                }}
+              >
+                {Number(
+                  invoice.loyalty_balance || 0
+                ).toFixed(2)} pts
+              </Typography>
+            </Stack>
+          )}
+        </Box>
+      )}
 
       <Divider
         sx={{
@@ -1065,6 +1162,18 @@ function A4Invoice({
           </Stack>
         )}
 
+        {Number(invoice.loyalty_discount || 0) > 0 && (
+          <Stack
+            direction="row"
+            justifyContent="space-between"
+          >
+            <Typography>Loyalty Discount</Typography>
+            <Typography>
+              -{money(invoice.loyalty_discount)}
+            </Typography>
+          </Stack>
+        )}
+
         {showSavings && totalSaving > 0 && (
           <Stack
             direction="row"
@@ -1108,6 +1217,34 @@ function A4Invoice({
           <Typography>Balance</Typography>
           <Typography>{money(balance)}</Typography>
         </Stack>
+
+        {Number(invoice.loyalty_points_earned || 0) > 0 && (
+          <Stack
+            direction="row"
+            justifyContent="space-between"
+          >
+            <Typography>Loyalty Earned</Typography>
+            <Typography fontWeight={800}>
+              +{Number(
+                invoice.loyalty_points_earned || 0
+              ).toFixed(2)} pts
+            </Typography>
+          </Stack>
+        )}
+
+        {Number(invoice.loyalty_points_redeemed || 0) > 0 && (
+          <Stack
+            direction="row"
+            justifyContent="space-between"
+          >
+            <Typography>Loyalty Redeemed</Typography>
+            <Typography fontWeight={800}>
+              -{Number(
+                invoice.loyalty_points_redeemed || 0
+              ).toFixed(2)} pts
+            </Typography>
+          </Stack>
+        )}
       </Box>
 
       <Typography

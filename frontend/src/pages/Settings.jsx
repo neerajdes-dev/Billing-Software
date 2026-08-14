@@ -11,6 +11,7 @@ import {
   FormControlLabel,
   Grid,
   MenuItem,
+  Paper,
   Slider,
   Stack,
   Tab,
@@ -27,11 +28,14 @@ import UploadRoundedIcon from "@mui/icons-material/UploadRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import PaymentsRoundedIcon from "@mui/icons-material/PaymentsRounded";
 import QrCode2RoundedIcon from "@mui/icons-material/QrCode2Rounded";
+import WorkspacePremiumRoundedIcon from "@mui/icons-material/WorkspacePremiumRounded";
 import AppLayout from "../components/AppLayout";
 import PageHeader from "../components/PageHeader";
 import PrintDesignerPreview from "../components/PrintDesignerPreview";
 import {
   getSettings,
+  getLoyaltySettings,
+  updateLoyaltySettings,
   updatePassword,
   updateSettings,
   updateUsername,
@@ -60,6 +64,18 @@ const DEFAULT_PRINT_SETTINGS = {
   show_footer: true,
   auto_cut: false,
   footer_message: "Thank you for your business. Visit again.",
+};
+
+const DEFAULT_LOYALTY_SETTINGS = {
+  enabled: true,
+  earn_amount: 100,
+  points_per_earn_amount: 1,
+  point_value: 1,
+  minimum_redeem_points: 10,
+  max_redeem_percent: 20,
+  silver_threshold: 10000,
+  gold_threshold: 25000,
+  platinum_threshold: 50000,
 };
 
 const loadJson = (key, fallback) => {
@@ -107,6 +123,11 @@ export default function Settings() {
     loadJson("billing_upi_settings", DEFAULT_UPI_SETTINGS)
   );
 
+  const [loyaltySettings, setLoyaltySettings] = useState(
+    DEFAULT_LOYALTY_SETTINGS
+  );
+  const [loyaltySaving, setLoyaltySaving] = useState(false);
+
   const logoInputRef = useRef(null);
   const [businessLogo, setBusinessLogo] = useState(
     localStorage.getItem("billing_business_logo") || "/resolvent-logo.jpg"
@@ -130,6 +151,29 @@ export default function Settings() {
         setMessage({ type: "error", text: error.message })
       );
   }, [userId]);
+
+  useEffect(() => {
+    getLoyaltySettings()
+      .then((data) =>
+        setLoyaltySettings({
+          ...DEFAULT_LOYALTY_SETTINGS,
+          ...(data || {}),
+        })
+      )
+      .catch((error) =>
+        setMessage({
+          type: "error",
+          text: error.message,
+        })
+      );
+  }, []);
+
+  const updateLoyaltySetting = (key, value) => {
+    setLoyaltySettings((current) => ({
+      ...current,
+      [key]: value,
+    }));
+  };
 
   const updatePrintSetting = (key, value) => {
     setPrintSettings((current) => ({
@@ -254,6 +298,48 @@ export default function Settings() {
       type: "success",
       text: "UPI payment QR settings saved successfully.",
     });
+  };
+
+  const saveLoyaltySettings = async () => {
+    try {
+      setLoyaltySaving(true);
+
+      await updateLoyaltySettings({
+        ...loyaltySettings,
+        earn_amount: Number(loyaltySettings.earn_amount || 0),
+        points_per_earn_amount: Number(
+          loyaltySettings.points_per_earn_amount || 0
+        ),
+        point_value: Number(loyaltySettings.point_value || 0),
+        minimum_redeem_points: Number(
+          loyaltySettings.minimum_redeem_points || 0
+        ),
+        max_redeem_percent: Number(
+          loyaltySettings.max_redeem_percent || 0
+        ),
+        silver_threshold: Number(
+          loyaltySettings.silver_threshold || 0
+        ),
+        gold_threshold: Number(
+          loyaltySettings.gold_threshold || 0
+        ),
+        platinum_threshold: Number(
+          loyaltySettings.platinum_threshold || 0
+        ),
+      });
+
+      setMessage({
+        type: "success",
+        text: "Customer loyalty settings saved successfully.",
+      });
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: error.message,
+      });
+    } finally {
+      setLoyaltySaving(false);
+    }
   };
 
   const saveUsername = async () => {
@@ -824,6 +910,300 @@ export default function Settings() {
     </Grid>
   );
 
+  const loyaltyPanel = (
+    <Grid container spacing={3}>
+      <Grid size={{ xs: 12, lg: 7 }}>
+        <Card>
+          <CardContent sx={{ p: 3 }}>
+            <Stack
+              direction="row"
+              spacing={1.5}
+              alignItems="center"
+              mb={3}
+            >
+              <WorkspacePremiumRoundedIcon color="primary" />
+              <Box>
+                <Typography variant="h6">
+                  Customer Loyalty Program
+                </Typography>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ mt: 0.5 }}
+                >
+                  Configure how customers earn and redeem loyalty points.
+                </Typography>
+              </Box>
+            </Stack>
+
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={Boolean(loyaltySettings.enabled)}
+                  onChange={(event) =>
+                    updateLoyaltySetting(
+                      "enabled",
+                      event.target.checked
+                    )
+                  }
+                />
+              }
+              label="Enable customer loyalty program"
+            />
+
+            <Divider sx={{ my: 2.5 }} />
+
+            <Typography fontWeight={800} mb={1.5}>
+              Earning Rules
+            </Typography>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  type="number"
+                  label="Spend Amount (₹)"
+                  value={loyaltySettings.earn_amount}
+                  onChange={(event) =>
+                    updateLoyaltySetting(
+                      "earn_amount",
+                      event.target.value
+                    )
+                  }
+                  helperText="Example: ₹100 purchase"
+                />
+              </Grid>
+
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  type="number"
+                  label="Base Points Earned"
+                  value={
+                    loyaltySettings.points_per_earn_amount
+                  }
+                  onChange={(event) =>
+                    updateLoyaltySetting(
+                      "points_per_earn_amount",
+                      event.target.value
+                    )
+                  }
+                  helperText="Example: earn 1 point for every ₹100"
+                />
+              </Grid>
+            </Grid>
+
+            <Divider sx={{ my: 2.5 }} />
+
+            <Typography fontWeight={800} mb={1.5}>
+              Redemption Rules
+            </Typography>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, md: 4 }}>
+                <TextField
+                  type="number"
+                  label="1 Point Value (₹)"
+                  value={loyaltySettings.point_value}
+                  onChange={(event) =>
+                    updateLoyaltySetting(
+                      "point_value",
+                      event.target.value
+                    )
+                  }
+                />
+              </Grid>
+
+              <Grid size={{ xs: 12, md: 4 }}>
+                <TextField
+                  type="number"
+                  label="Minimum Redeem Points"
+                  value={
+                    loyaltySettings.minimum_redeem_points
+                  }
+                  onChange={(event) =>
+                    updateLoyaltySetting(
+                      "minimum_redeem_points",
+                      event.target.value
+                    )
+                  }
+                />
+              </Grid>
+
+              <Grid size={{ xs: 12, md: 4 }}>
+                <TextField
+                  type="number"
+                  label="Max Bill Redemption %"
+                  value={
+                    loyaltySettings.max_redeem_percent
+                  }
+                  onChange={(event) =>
+                    updateLoyaltySetting(
+                      "max_redeem_percent",
+                      event.target.value
+                    )
+                  }
+                />
+              </Grid>
+            </Grid>
+
+            <Divider sx={{ my: 2.5 }} />
+
+            <Typography fontWeight={800} mb={1.5}>
+              Membership Tiers
+            </Typography>
+
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Point earning multiplier: Regular 1×, Silver 1.25×,
+              Gold 1.5× and Platinum 2×.
+            </Alert>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, md: 4 }}>
+                <TextField
+                  type="number"
+                  label="Silver Spend (₹)"
+                  value={
+                    loyaltySettings.silver_threshold
+                  }
+                  onChange={(event) =>
+                    updateLoyaltySetting(
+                      "silver_threshold",
+                      event.target.value
+                    )
+                  }
+                />
+              </Grid>
+
+              <Grid size={{ xs: 12, md: 4 }}>
+                <TextField
+                  type="number"
+                  label="Gold Spend (₹)"
+                  value={
+                    loyaltySettings.gold_threshold
+                  }
+                  onChange={(event) =>
+                    updateLoyaltySetting(
+                      "gold_threshold",
+                      event.target.value
+                    )
+                  }
+                />
+              </Grid>
+
+              <Grid size={{ xs: 12, md: 4 }}>
+                <TextField
+                  type="number"
+                  label="Platinum Spend (₹)"
+                  value={
+                    loyaltySettings.platinum_threshold
+                  }
+                  onChange={(event) =>
+                    updateLoyaltySetting(
+                      "platinum_threshold",
+                      event.target.value
+                    )
+                  }
+                />
+              </Grid>
+            </Grid>
+
+            <Button
+              variant="contained"
+              startIcon={<SaveRoundedIcon />}
+              onClick={saveLoyaltySettings}
+              disabled={loyaltySaving}
+              sx={{ mt: 3 }}
+            >
+              {loyaltySaving
+                ? "Saving..."
+                : "Save Loyalty Settings"}
+            </Button>
+          </CardContent>
+        </Card>
+      </Grid>
+
+      <Grid size={{ xs: 12, lg: 5 }}>
+        <Card>
+          <CardContent sx={{ p: 3 }}>
+            <Typography variant="h6">
+              Example
+            </Typography>
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ mt: 0.5, mb: 2.5 }}
+            >
+              Preview of the current loyalty rule.
+            </Typography>
+
+            <Stack spacing={1.5}>
+              <Paper
+                variant="outlined"
+                sx={{ p: 2, borderRadius: 3 }}
+              >
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                >
+                  Spend
+                </Typography>
+                <Typography variant="h5" fontWeight={900}>
+                  ₹1,000
+                </Typography>
+              </Paper>
+
+              <Paper
+                variant="outlined"
+                sx={{ p: 2, borderRadius: 3 }}
+              >
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                >
+                  Regular Member Earns
+                </Typography>
+                <Typography variant="h5" fontWeight={900}>
+                  {(
+                    (1000 /
+                      Math.max(
+                        1,
+                        Number(
+                          loyaltySettings.earn_amount || 1
+                        )
+                      )) *
+                    Number(
+                      loyaltySettings.points_per_earn_amount ||
+                        0
+                    )
+                  ).toFixed(2)}{" "}
+                  Points
+                </Typography>
+              </Paper>
+
+              <Paper
+                variant="outlined"
+                sx={{ p: 2, borderRadius: 3 }}
+              >
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                >
+                  100 Points Worth
+                </Typography>
+                <Typography variant="h5" fontWeight={900}>
+                  ₹
+                  {(
+                    100 *
+                    Number(loyaltySettings.point_value || 0)
+                  ).toFixed(2)}
+                </Typography>
+              </Paper>
+            </Stack>
+          </CardContent>
+        </Card>
+      </Grid>
+    </Grid>
+  );
+
   const accountPanel = (
     <Grid container spacing={3}>
       <Grid size={{ xs: 12, md: 6 }}>
@@ -936,6 +1316,7 @@ export default function Settings() {
           <Tab icon={<BusinessRoundedIcon />} iconPosition="start" label="Business Profile" />
           <Tab icon={<PrintRoundedIcon />} iconPosition="start" label="Print Designer" />
           <Tab icon={<PaymentsRoundedIcon />} iconPosition="start" label="Payment QR" />
+          <Tab icon={<WorkspacePremiumRoundedIcon />} iconPosition="start" label="Loyalty" />
           <Tab icon={<PersonRoundedIcon />} iconPosition="start" label="Account & Security" />
         </Tabs>
       </Card>
@@ -943,7 +1324,8 @@ export default function Settings() {
       {tab === 0 && businessPanel}
       {tab === 1 && designerPanel}
       {tab === 2 && paymentPanel}
-      {tab === 3 && accountPanel}
+      {tab === 3 && loyaltyPanel}
+      {tab === 4 && accountPanel}
     </AppLayout>
   );
 }

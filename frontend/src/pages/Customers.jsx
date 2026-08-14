@@ -36,12 +36,17 @@ import AccountBalanceWalletRoundedIcon from "@mui/icons-material/AccountBalanceW
 import PaymentsRoundedIcon from "@mui/icons-material/PaymentsRounded";
 import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
 import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
+import WorkspacePremiumRoundedIcon from "@mui/icons-material/WorkspacePremiumRounded";
+import StarRoundedIcon from "@mui/icons-material/StarRounded";
 import AppLayout from "../components/AppLayout";
 import PageHeader from "../components/PageHeader";
 import {
   addCustomer,
   addCustomerPayment,
+  adjustCustomerLoyalty,
   getCustomerCreditLedger,
+  getCustomerLoyalty,
+  getLoyaltyDashboard,
 } from "../services/api";
 
 const money = (value) =>
@@ -86,10 +91,45 @@ export default function Customers() {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [payment, setPayment] = useState(emptyPayment);
+  const [loyaltyDashboard, setLoyaltyDashboard] = useState({
+    members: 0,
+    points_outstanding: 0,
+    platinum_members: 0,
+    top_members: [],
+  });
+  const [loyaltyOpen, setLoyaltyOpen] = useState(false);
+  const [loyaltyDetail, setLoyaltyDetail] = useState(null);
+  const [loyaltyLoading, setLoyaltyLoading] = useState(false);
+  const [adjustmentPoints, setAdjustmentPoints] = useState("");
+  const [adjustmentNote, setAdjustmentNote] = useState("");
+  const [adjustmentSaving, setAdjustmentSaving] = useState(false);
 
   const load = async () => {
     try {
-      setCustomers(await getCustomerCreditLedger());
+      const [customerRows, loyaltyData] =
+        await Promise.all([
+          getCustomerCreditLedger(),
+          getLoyaltyDashboard().catch(() => ({
+            members: 0,
+            points_outstanding: 0,
+            platinum_members: 0,
+            top_members: [],
+          })),
+        ]);
+
+      setCustomers(
+        Array.isArray(customerRows)
+          ? customerRows
+          : []
+      );
+      setLoyaltyDashboard(
+        loyaltyData || {
+          members: 0,
+          points_outstanding: 0,
+          platinum_members: 0,
+          top_members: [],
+        }
+      );
     } catch (error) {
       setMessage({ type: "error", text: error.message });
     }
@@ -151,6 +191,77 @@ export default function Customers() {
     setHistoryOpen(true);
   };
 
+  const openLoyalty = async (customer) => {
+    setSelectedCustomer(customer);
+    setLoyaltyOpen(true);
+    setLoyaltyDetail(null);
+    setAdjustmentPoints("");
+    setAdjustmentNote("");
+
+    try {
+      setLoyaltyLoading(true);
+      const detail = await getCustomerLoyalty(
+        customer.id
+      );
+      setLoyaltyDetail(detail);
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: error.message,
+      });
+    } finally {
+      setLoyaltyLoading(false);
+    }
+  };
+
+  const saveLoyaltyAdjustment = async () => {
+    if (!selectedCustomer) return;
+
+    const points = Number(adjustmentPoints || 0);
+
+    if (!points) {
+      setMessage({
+        type: "warning",
+        text: "Enter loyalty points to add or deduct.",
+      });
+      return;
+    }
+
+    try {
+      setAdjustmentSaving(true);
+
+      await adjustCustomerLoyalty(
+        selectedCustomer.id,
+        {
+          points,
+          note:
+            adjustmentNote.trim() ||
+            "Manual adjustment",
+        }
+      );
+
+      const detail = await getCustomerLoyalty(
+        selectedCustomer.id
+      );
+      setLoyaltyDetail(detail);
+      setAdjustmentPoints("");
+      setAdjustmentNote("");
+      await load();
+
+      setMessage({
+        type: "success",
+        text: "Loyalty points updated successfully.",
+      });
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: error.message,
+      });
+    } finally {
+      setAdjustmentSaving(false);
+    }
+  };
+
   const savePayment = async () => {
     const amount = Number(payment.paid_amount || 0);
     const outstanding = Number(selectedCustomer?.pending_amount || 0);
@@ -195,8 +306,8 @@ export default function Customers() {
   return (
     <AppLayout>
       <PageHeader
-        title="Credit Customers"
-        subtitle="Track credit purchases, received payments and outstanding balances"
+        title="Customers & Loyalty"
+        subtitle="Track credit balances, loyalty points, membership tiers and customer history"
       />
 
       {message.text && (
@@ -207,12 +318,14 @@ export default function Customers() {
 
       <Grid container spacing={2.5} sx={{ mb: 3 }}>
         {[
-          ["Credit customers", customers.length, <PeopleAltRoundedIcon />],
+          ["Customers", customers.length, <PeopleAltRoundedIcon />],
           ["Total credit", money(totals.credit), <ReceiptLongRoundedIcon />],
-          ["Amount received", money(totals.paid), <PaymentsRoundedIcon />],
           ["Outstanding", money(totals.outstanding), <AccountBalanceWalletRoundedIcon />],
+          ["Loyalty points", Number(loyaltyDashboard.points_outstanding || 0).toFixed(2), <WorkspacePremiumRoundedIcon />],
+          ["Platinum members", Number(loyaltyDashboard.platinum_members || 0), <StarRoundedIcon />],
+          ["Amount received", money(totals.paid), <PaymentsRoundedIcon />],
         ].map(([label, value, icon]) => (
-          <Grid key={label} size={{ xs: 12, sm: 6, xl: 3 }}>
+          <Grid key={label} size={{ xs: 12, sm: 6, lg: 4, xl: 2 }}>
             <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, height: "100%" }}>
               <Stack direction="row" justifyContent="space-between" alignItems="center">
                 <Box>
@@ -259,9 +372,9 @@ export default function Customers() {
             <CardContent sx={{ p: 0 }}>
               <Box sx={{ p: 3, display: "flex", gap: 2, justifyContent: "space-between", alignItems: { xs: "stretch", sm: "center" }, flexDirection: { xs: "column", sm: "row" } }}>
                 <Box>
-                  <Typography variant="h6">Credit amount details</Typography>
+                  <Typography variant="h6">Customer Accounts</Typography>
                   <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                    Credit purchases automatically increase the balance. Record a payment to reduce paid and outstanding amounts.
+                    Credit purchases, payment balances and loyalty membership in one customer view.
                   </Typography>
                 </Box>
                 <TextField
@@ -290,13 +403,15 @@ export default function Customers() {
                       <TableCell align="right">Credit Amount</TableCell>
                       <TableCell align="right">Paid Amount</TableCell>
                       <TableCell align="right">Outstanding</TableCell>
+                      <TableCell align="right">Points</TableCell>
+                      <TableCell>Tier</TableCell>
                       <TableCell>Actions</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {filteredCustomers.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} align="center" sx={{ py: 6, color: "text.secondary" }}>
+                        <TableCell colSpan={9} align="center" sx={{ py: 6, color: "text.secondary" }}>
                           No credit customers found
                         </TableCell>
                       </TableRow>
@@ -319,6 +434,29 @@ export default function Customers() {
                               sx={{ fontWeight: 800 }}
                             />
                           </TableCell>
+                          <TableCell align="right">
+                            <Typography fontWeight={850}>
+                              {Number(customer.loyalty_points || 0).toFixed(2)}
+                            </Typography>
+                          </TableCell>
+
+                          <TableCell>
+                            <Chip
+                              size="small"
+                              label={customer.loyalty_tier || "Regular"}
+                              color={
+                                customer.loyalty_tier === "Platinum"
+                                  ? "secondary"
+                                  : customer.loyalty_tier === "Gold"
+                                  ? "warning"
+                                  : customer.loyalty_tier === "Silver"
+                                  ? "primary"
+                                  : "default"
+                              }
+                              variant="outlined"
+                            />
+                          </TableCell>
+
                           <TableCell>
                             <Stack direction={{ xs: "column", xl: "row" }} spacing={1}>
                               <Button
@@ -340,6 +478,15 @@ export default function Customers() {
                               >
                                 History
                               </Button>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                startIcon={<WorkspacePremiumRoundedIcon />}
+                                onClick={() => openLoyalty(customer)}
+                                sx={{ ...actionButtonSx, minHeight: 38, px: 1.5, whiteSpace: "nowrap" }}
+                              >
+                                Loyalty
+                              </Button>
                             </Stack>
                           </TableCell>
                         </TableRow>
@@ -352,6 +499,264 @@ export default function Customers() {
           </Card>
         </Grid>
       </Grid>
+
+      <Dialog
+        open={loyaltyOpen}
+        onClose={() =>
+          !adjustmentSaving &&
+          setLoyaltyOpen(false)
+        }
+        fullWidth
+        maxWidth="md"
+      >
+        <DialogTitle>
+          Customer Loyalty
+        </DialogTitle>
+
+        <DialogContent dividers>
+          {loyaltyLoading ? (
+            <Typography color="text.secondary">
+              Loading loyalty details...
+            </Typography>
+          ) : loyaltyDetail ? (
+            <Stack spacing={2.5}>
+              <Grid container spacing={2}>
+                {[
+                  ["Points Balance", Number(loyaltyDetail.points || 0).toFixed(2)],
+                  ["Tier", loyaltyDetail.tier || "Regular"],
+                  ["Lifetime Purchase", money(loyaltyDetail.lifetime_spend)],
+                  ["Total Bills", loyaltyDetail.total_bills || 0],
+                ].map(([label, value]) => (
+                  <Grid
+                    key={label}
+                    size={{
+                      xs: 12,
+                      sm: 6,
+                      md: 3,
+                    }}
+                  >
+                    <Paper
+                      variant="outlined"
+                      sx={{
+                        p: 2,
+                        borderRadius: 3,
+                        height: "100%",
+                      }}
+                    >
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                      >
+                        {label}
+                      </Typography>
+                      <Typography
+                        variant="h6"
+                        fontWeight={900}
+                        sx={{ mt: 0.5 }}
+                      >
+                        {value}
+                      </Typography>
+                    </Paper>
+                  </Grid>
+                ))}
+              </Grid>
+
+              {loyaltyDetail.next_tier && (
+                <Alert severity="info">
+                  {money(
+                    loyaltyDetail.amount_to_next_tier
+                  )} more purchase to reach{" "}
+                  <strong>
+                    {loyaltyDetail.next_tier}
+                  </strong>
+                  .
+                </Alert>
+              )}
+
+              <Card variant="outlined">
+                <CardContent>
+                  <Typography fontWeight={850}>
+                    Manual Point Adjustment
+                  </Typography>
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{ mt: 0.5, mb: 2 }}
+                  >
+                    Positive points add to the balance.
+                    Negative points deduct from the balance.
+                  </Typography>
+
+                  <Grid container spacing={1.5}>
+                    <Grid size={{ xs: 12, sm: 4 }}>
+                      <TextField
+                        type="number"
+                        label="Points"
+                        value={adjustmentPoints}
+                        onChange={(event) =>
+                          setAdjustmentPoints(
+                            event.target.value
+                          )
+                        }
+                      />
+                    </Grid>
+
+                    <Grid size={{ xs: 12, sm: 5 }}>
+                      <TextField
+                        label="Reason"
+                        value={adjustmentNote}
+                        onChange={(event) =>
+                          setAdjustmentNote(
+                            event.target.value
+                          )
+                        }
+                      />
+                    </Grid>
+
+                    <Grid size={{ xs: 12, sm: 3 }}>
+                      <Button
+                        fullWidth
+                        variant="contained"
+                        onClick={
+                          saveLoyaltyAdjustment
+                        }
+                        disabled={adjustmentSaving}
+                        sx={{ height: 42 }}
+                      >
+                        {adjustmentSaving
+                          ? "Saving..."
+                          : "Update Points"}
+                      </Button>
+                    </Grid>
+                  </Grid>
+                </CardContent>
+              </Card>
+
+              <Box>
+                <Typography
+                  fontWeight={850}
+                  sx={{ mb: 1.25 }}
+                >
+                  Loyalty History
+                </Typography>
+
+                <TableContainer
+                  component={Paper}
+                  variant="outlined"
+                  sx={{
+                    maxHeight: 320,
+                    borderRadius: 3,
+                  }}
+                >
+                  <Table stickyHeader size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Date</TableCell>
+                        <TableCell>Type</TableCell>
+                        <TableCell>Note</TableCell>
+                        <TableCell align="right">
+                          Points
+                        </TableCell>
+                        <TableCell align="right">
+                          Balance
+                        </TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {(loyaltyDetail.transactions || []).map(
+                        (row) => (
+                          <TableRow key={row.id}>
+                            <TableCell>
+                              {row.created_at
+                                ? dayjs(
+                                    row.created_at
+                                  ).format(
+                                    "DD MMM YYYY HH:mm"
+                                  )
+                                : "-"}
+                            </TableCell>
+                            <TableCell>
+                              <Chip
+                                size="small"
+                                label={
+                                  row.transaction_type
+                                }
+                                color={
+                                  Number(row.points) >= 0
+                                    ? "success"
+                                    : "warning"
+                                }
+                                variant="outlined"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              {row.note || "-"}
+                            </TableCell>
+                            <TableCell align="right">
+                              <Typography
+                                fontWeight={800}
+                                color={
+                                  Number(
+                                    row.points
+                                  ) >= 0
+                                    ? "success.main"
+                                    : "warning.main"
+                                }
+                              >
+                                {Number(row.points) > 0
+                                  ? "+"
+                                  : ""}
+                                {Number(
+                                  row.points || 0
+                                ).toFixed(2)}
+                              </Typography>
+                            </TableCell>
+                            <TableCell align="right">
+                              {Number(
+                                row.balance_after || 0
+                              ).toFixed(2)}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      )}
+
+                      {!loyaltyDetail.transactions?.length && (
+                        <TableRow>
+                          <TableCell
+                            colSpan={5}
+                            align="center"
+                            sx={{
+                              py: 4,
+                              color:
+                                "text.secondary",
+                            }}
+                          >
+                            No loyalty transactions yet.
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </Box>
+            </Stack>
+          ) : (
+            <Alert severity="info">
+              No loyalty information available.
+            </Alert>
+          )}
+        </DialogContent>
+
+        <DialogActions>
+          <Button
+            onClick={() =>
+              setLoyaltyOpen(false)
+            }
+          >
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={paymentOpen} onClose={() => !paymentSaving && setPaymentOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Update Credit Amount</DialogTitle>

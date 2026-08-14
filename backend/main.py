@@ -53,6 +53,48 @@ def run_database_migrations():
         "ALTER TABLE sales ADD COLUMN IF NOT EXISTS credit_amount DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE sales ADD COLUMN IF NOT EXISTS amount_received DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE sales ADD COLUMN IF NOT EXISTS change_return DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE sales ADD COLUMN IF NOT EXISTS loyalty_points_earned DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE sales ADD COLUMN IF NOT EXISTS loyalty_points_redeemed DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE sales ADD COLUMN IF NOT EXISTS loyalty_discount DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE customers ADD COLUMN IF NOT EXISTS loyalty_points DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE customers ADD COLUMN IF NOT EXISTS loyalty_tier VARCHAR DEFAULT 'Regular'",
+        "ALTER TABLE customers ADD COLUMN IF NOT EXISTS loyalty_member_since TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        """
+        CREATE TABLE IF NOT EXISTS loyalty_settings (
+            id SERIAL PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            earn_amount DOUBLE PRECISION NOT NULL DEFAULT 100,
+            points_per_earn_amount DOUBLE PRECISION NOT NULL DEFAULT 1,
+            point_value DOUBLE PRECISION NOT NULL DEFAULT 1,
+            minimum_redeem_points DOUBLE PRECISION NOT NULL DEFAULT 10,
+            max_redeem_percent DOUBLE PRECISION NOT NULL DEFAULT 20,
+            silver_threshold DOUBLE PRECISION NOT NULL DEFAULT 10000,
+            gold_threshold DOUBLE PRECISION NOT NULL DEFAULT 25000,
+            platinum_threshold DOUBLE PRECISION NOT NULL DEFAULT 50000,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS loyalty_transactions (
+            id SERIAL PRIMARY KEY,
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            sale_id INTEGER REFERENCES sales(id) ON DELETE SET NULL,
+            transaction_type VARCHAR NOT NULL,
+            points DOUBLE PRECISION NOT NULL DEFAULT 0,
+            balance_after DOUBLE PRECISION NOT NULL DEFAULT 0,
+            note VARCHAR,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        INSERT INTO loyalty_settings (
+            enabled, earn_amount, points_per_earn_amount, point_value,
+            minimum_redeem_points, max_redeem_percent,
+            silver_threshold, gold_threshold, platinum_threshold
+        )
+        SELECT 1, 100, 1, 1, 10, 20, 10000, 25000, 50000
+        WHERE NOT EXISTS (SELECT 1 FROM loyalty_settings)
+        """,
 
         "ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS mrp DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS saving DOUBLE PRECISION DEFAULT 0",
@@ -105,6 +147,50 @@ def to_float(value: Any) -> float:
     except (TypeError, ValueError):
         return 0.0
 
+
+
+
+def get_loyalty_settings(db: Session):
+    settings = db.query(models.LoyaltySettings).order_by(models.LoyaltySettings.id.asc()).first()
+    if settings:
+        return settings
+
+    settings = models.LoyaltySettings()
+    db.add(settings)
+    db.flush()
+    return settings
+
+
+def customer_sales_query(db: Session, customer):
+    query = db.query(models.Sale)
+
+    if customer.mobile:
+        return query.filter(models.Sale.customer_mobile == customer.mobile)
+
+    return query.filter(models.Sale.customer_name == customer.customer_name)
+
+
+def customer_lifetime_spend(db: Session, customer) -> float:
+    return sum(to_float(row.final_amount) for row in customer_sales_query(db, customer).all())
+
+
+def loyalty_tier_for_spend(spend: float, settings) -> str:
+    if spend >= to_float(settings.platinum_threshold):
+        return "Platinum"
+    if spend >= to_float(settings.gold_threshold):
+        return "Gold"
+    if spend >= to_float(settings.silver_threshold):
+        return "Silver"
+    return "Regular"
+
+
+def loyalty_tier_multiplier(tier: str) -> float:
+    return {
+        "Regular": 1.0,
+        "Silver": 1.25,
+        "Gold": 1.5,
+        "Platinum": 2.0,
+    }.get(str(tier or "Regular"), 1.0)
 
 
 def normalize_date_value(value):
@@ -476,7 +562,65 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
 
     gross_total = subtotal + gst_amount
     discount_amount = max(0.0, min(to_float(data.discount_amount), gross_total))
-    final_amount = max(gross_total - discount_amount, 0.0)
+
+    loyalty_settings = get_loyalty_settings(db)
+    loyalty_customer = None
+    loyalty_points_redeemed = 0.0
+    loyalty_discount = 0.0
+
+    if data.customer_id:
+        loyalty_customer = (
+            db.query(models.Customer)
+            .filter(models.Customer.id == data.customer_id)
+            .first()
+        )
+
+        if not loyalty_customer:
+            raise HTTPException(status_code=404, detail="Selected customer not found")
+
+    requested_points = max(0.0, to_float(data.loyalty_points_to_redeem))
+
+    if requested_points > 0:
+        if not loyalty_settings.enabled:
+            raise HTTPException(status_code=400, detail="Loyalty program is disabled")
+
+        if not loyalty_customer:
+            raise HTTPException(
+                status_code=400,
+                detail="Select a registered customer to redeem loyalty points",
+            )
+
+        available_points = max(0.0, to_float(loyalty_customer.loyalty_points))
+
+        if requested_points > available_points + 0.001:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Customer has only {available_points:.2f} loyalty points available",
+            )
+
+        if requested_points < to_float(loyalty_settings.minimum_redeem_points):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Minimum redemption is {loyalty_settings.minimum_redeem_points:.0f} points",
+            )
+
+        pre_loyalty_total = max(gross_total - discount_amount, 0.0)
+        maximum_loyalty_discount = (
+            pre_loyalty_total * to_float(loyalty_settings.max_redeem_percent) / 100
+        )
+
+        requested_discount = requested_points * to_float(loyalty_settings.point_value)
+        loyalty_discount = min(requested_discount, maximum_loyalty_discount)
+
+        if to_float(loyalty_settings.point_value) > 0:
+            loyalty_points_redeemed = (
+                loyalty_discount / to_float(loyalty_settings.point_value)
+            )
+
+    final_amount = max(
+        gross_total - discount_amount - loyalty_discount,
+        0.0,
+    )
 
     payment_mode = str(data.payment_mode or "Cash").strip() or "Cash"
 
@@ -556,6 +700,9 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
         credit_amount=credit_amount,
         amount_received=amount_received,
         change_return=change_return,
+        loyalty_points_earned=0,
+        loyalty_points_redeemed=loyalty_points_redeemed,
+        loyalty_discount=loyalty_discount,
         bill_date=selected_bill_date,
         created_at=selected_bill_date,
     )
@@ -565,6 +712,62 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
 
     for row in sale_items:
         db.add(models.SaleItem(sale_id=sale.id, **row))
+
+    loyalty_points_earned = 0.0
+    loyalty_balance = None
+    loyalty_tier = None
+
+    if loyalty_customer and loyalty_settings.enabled:
+        current_balance = max(0.0, to_float(loyalty_customer.loyalty_points))
+
+        if loyalty_points_redeemed > 0:
+            current_balance = max(0.0, current_balance - loyalty_points_redeemed)
+            loyalty_customer.loyalty_points = current_balance
+
+            db.add(
+                models.LoyaltyTransaction(
+                    customer_id=loyalty_customer.id,
+                    sale_id=sale.id,
+                    transaction_type="Redeemed",
+                    points=-loyalty_points_redeemed,
+                    balance_after=current_balance,
+                    note=f"Redeemed on invoice {sale.invoice_no}",
+                )
+            )
+
+        lifetime_spend = customer_lifetime_spend(db, loyalty_customer)
+        loyalty_tier = loyalty_tier_for_spend(lifetime_spend, loyalty_settings)
+        loyalty_customer.loyalty_tier = loyalty_tier
+
+        earn_amount = max(1.0, to_float(loyalty_settings.earn_amount))
+        earning_units = int(final_amount // earn_amount)
+        base_points = (
+            earning_units *
+            to_float(loyalty_settings.points_per_earn_amount)
+        )
+
+        loyalty_points_earned = round(
+            base_points * loyalty_tier_multiplier(loyalty_tier),
+            2,
+        )
+
+        if loyalty_points_earned > 0:
+            current_balance += loyalty_points_earned
+            loyalty_customer.loyalty_points = current_balance
+
+            db.add(
+                models.LoyaltyTransaction(
+                    customer_id=loyalty_customer.id,
+                    sale_id=sale.id,
+                    transaction_type="Earned",
+                    points=loyalty_points_earned,
+                    balance_after=current_balance,
+                    note=f"Earned on invoice {sale.invoice_no}",
+                )
+            )
+
+        sale.loyalty_points_earned = loyalty_points_earned
+        loyalty_balance = current_balance
 
     db.commit()
     db.refresh(sale)
@@ -587,6 +790,11 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
         "credit_amount": round(credit_amount, 2),
         "amount_received": round(amount_received, 2),
         "change_return": round(change_return, 2),
+        "loyalty_points_earned": round(loyalty_points_earned, 2),
+        "loyalty_points_redeemed": round(loyalty_points_redeemed, 2),
+        "loyalty_discount": round(loyalty_discount, 2),
+        "loyalty_balance": round(loyalty_balance, 2) if loyalty_balance is not None else None,
+        "loyalty_tier": loyalty_tier,
         "bill_date": sale.bill_date.strftime("%Y-%m-%d") if sale.bill_date else None,
         "items": sale_items,
     }
@@ -1265,12 +1473,244 @@ def import_items(data: schemas.ItemImport, db: Session = Depends(get_db)):
         raise
 
 
+
+@app.get("/loyalty/settings")
+def read_loyalty_settings(db: Session = Depends(get_db)):
+    settings = get_loyalty_settings(db)
+
+    return {
+        "enabled": bool(settings.enabled),
+        "earn_amount": round(to_float(settings.earn_amount), 2),
+        "points_per_earn_amount": round(to_float(settings.points_per_earn_amount), 2),
+        "point_value": round(to_float(settings.point_value), 2),
+        "minimum_redeem_points": round(to_float(settings.minimum_redeem_points), 2),
+        "max_redeem_percent": round(to_float(settings.max_redeem_percent), 2),
+        "silver_threshold": round(to_float(settings.silver_threshold), 2),
+        "gold_threshold": round(to_float(settings.gold_threshold), 2),
+        "platinum_threshold": round(to_float(settings.platinum_threshold), 2),
+    }
+
+
+@app.put("/loyalty/settings")
+def save_loyalty_settings(
+    data: schemas.LoyaltySettingsUpdate,
+    db: Session = Depends(get_db),
+):
+    settings = get_loyalty_settings(db)
+
+    numeric_values = [
+        data.earn_amount,
+        data.points_per_earn_amount,
+        data.point_value,
+        data.minimum_redeem_points,
+        data.max_redeem_percent,
+        data.silver_threshold,
+        data.gold_threshold,
+        data.platinum_threshold,
+    ]
+
+    if any(to_float(value) < 0 for value in numeric_values):
+        raise HTTPException(status_code=400, detail="Loyalty settings cannot be negative")
+
+    if data.earn_amount <= 0:
+        raise HTTPException(status_code=400, detail="Earn amount must be greater than zero")
+
+    if data.point_value <= 0:
+        raise HTTPException(status_code=400, detail="Point value must be greater than zero")
+
+    if not 0 <= data.max_redeem_percent <= 100:
+        raise HTTPException(status_code=400, detail="Maximum redemption percentage must be between 0 and 100")
+
+    if not (
+        data.silver_threshold <= data.gold_threshold <= data.platinum_threshold
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Tier thresholds must be Silver ≤ Gold ≤ Platinum",
+        )
+
+    settings.enabled = 1 if data.enabled else 0
+    settings.earn_amount = data.earn_amount
+    settings.points_per_earn_amount = data.points_per_earn_amount
+    settings.point_value = data.point_value
+    settings.minimum_redeem_points = data.minimum_redeem_points
+    settings.max_redeem_percent = data.max_redeem_percent
+    settings.silver_threshold = data.silver_threshold
+    settings.gold_threshold = data.gold_threshold
+    settings.platinum_threshold = data.platinum_threshold
+
+    db.commit()
+
+    return {"message": "Loyalty settings updated successfully"}
+
+
+@app.get("/customers/{customer_id}/loyalty")
+def customer_loyalty_summary(customer_id: int, db: Session = Depends(get_db)):
+    customer = db.query(models.Customer).filter(models.Customer.id == customer_id).first()
+
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    settings = get_loyalty_settings(db)
+    sales = (
+        customer_sales_query(db, customer)
+        .order_by(models.Sale.bill_date.desc(), models.Sale.id.desc())
+        .all()
+    )
+
+    lifetime_spend = sum(to_float(row.final_amount) for row in sales)
+    tier = loyalty_tier_for_spend(lifetime_spend, settings)
+
+    if customer.loyalty_tier != tier:
+        customer.loyalty_tier = tier
+        db.commit()
+
+    transactions = (
+        db.query(models.LoyaltyTransaction)
+        .filter(models.LoyaltyTransaction.customer_id == customer.id)
+        .order_by(models.LoyaltyTransaction.created_at.desc(), models.LoyaltyTransaction.id.desc())
+        .limit(50)
+        .all()
+    )
+
+    next_tier = None
+    amount_to_next_tier = 0.0
+
+    if tier == "Regular":
+        next_tier = "Silver"
+        amount_to_next_tier = max(to_float(settings.silver_threshold) - lifetime_spend, 0)
+    elif tier == "Silver":
+        next_tier = "Gold"
+        amount_to_next_tier = max(to_float(settings.gold_threshold) - lifetime_spend, 0)
+    elif tier == "Gold":
+        next_tier = "Platinum"
+        amount_to_next_tier = max(to_float(settings.platinum_threshold) - lifetime_spend, 0)
+
+    return {
+        "customer_id": customer.id,
+        "customer_name": customer.customer_name,
+        "mobile": customer.mobile,
+        "points": round(to_float(customer.loyalty_points), 2),
+        "tier": tier,
+        "member_since": customer.loyalty_member_since.isoformat() if customer.loyalty_member_since else None,
+        "lifetime_spend": round(lifetime_spend, 2),
+        "total_bills": len(sales),
+        "last_purchase": sales[0].bill_date.isoformat() if sales else None,
+        "next_tier": next_tier,
+        "amount_to_next_tier": round(amount_to_next_tier, 2),
+        "redemption_value": round(
+            to_float(customer.loyalty_points) * to_float(settings.point_value),
+            2,
+        ),
+        "transactions": [
+            {
+                "id": row.id,
+                "sale_id": row.sale_id,
+                "transaction_type": row.transaction_type,
+                "points": round(to_float(row.points), 2),
+                "balance_after": round(to_float(row.balance_after), 2),
+                "note": row.note,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in transactions
+        ],
+    }
+
+
+@app.post("/customers/{customer_id}/loyalty-adjustment")
+def loyalty_adjustment(
+    customer_id: int,
+    data: schemas.LoyaltyAdjustmentCreate,
+    db: Session = Depends(get_db),
+):
+    customer = db.query(models.Customer).filter(models.Customer.id == customer_id).first()
+
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    adjustment = to_float(data.points)
+
+    if adjustment == 0:
+        raise HTTPException(status_code=400, detail="Adjustment points cannot be zero")
+
+    current = max(0.0, to_float(customer.loyalty_points))
+    next_balance = current + adjustment
+
+    if next_balance < 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Adjustment cannot reduce balance below zero. Current balance: {current:.2f}",
+        )
+
+    customer.loyalty_points = next_balance
+
+    db.add(
+        models.LoyaltyTransaction(
+            customer_id=customer.id,
+            transaction_type="Adjustment",
+            points=adjustment,
+            balance_after=next_balance,
+            note=data.note or "Manual loyalty adjustment",
+        )
+    )
+
+    db.commit()
+
+    return {
+        "message": "Loyalty points adjusted successfully",
+        "points": round(next_balance, 2),
+    }
+
+
+@app.get("/loyalty/dashboard")
+def loyalty_dashboard(db: Session = Depends(get_db)):
+    customers = db.query(models.Customer).order_by(models.Customer.customer_name.asc()).all()
+    settings = get_loyalty_settings(db)
+
+    rows = []
+
+    for customer in customers:
+        lifetime_spend = customer_lifetime_spend(db, customer)
+        tier = loyalty_tier_for_spend(lifetime_spend, settings)
+
+        rows.append({
+            "id": customer.id,
+            "customer_name": customer.customer_name,
+            "mobile": customer.mobile,
+            "points": round(to_float(customer.loyalty_points), 2),
+            "tier": tier,
+            "lifetime_spend": round(lifetime_spend, 2),
+        })
+
+    return {
+        "members": len(customers),
+        "points_outstanding": round(sum(row["points"] for row in rows), 2),
+        "platinum_members": sum(1 for row in rows if row["tier"] == "Platinum"),
+        "top_members": sorted(
+            rows,
+            key=lambda row: (row["lifetime_spend"], row["points"]),
+            reverse=True,
+        )[:10],
+    }
+
+
 @app.get("/customers/credit-ledger")
 def customer_credit_ledger(db: Session = Depends(get_db)):
     customers = db.query(models.Customer).order_by(models.Customer.customer_name.asc()).all()
     result = []
 
+    loyalty_settings = get_loyalty_settings(db)
+
     for customer in customers:
+        lifetime_spend = customer_lifetime_spend(db, customer)
+        current_loyalty_tier = loyalty_tier_for_spend(
+            lifetime_spend,
+            loyalty_settings,
+        )
+
+        if customer.loyalty_tier != current_loyalty_tier:
+            customer.loyalty_tier = current_loyalty_tier
+
         sales_query = db.query(models.Sale).filter(models.Sale.payment_mode == "Credit")
         if customer.mobile:
             sales_query = sales_query.filter(models.Sale.customer_mobile == customer.mobile)
@@ -1288,6 +1728,9 @@ def customer_credit_ledger(db: Session = Depends(get_db)):
             "customer_name": customer.customer_name,
             "mobile": customer.mobile,
             "address": customer.address,
+            "loyalty_points": round(to_float(customer.loyalty_points), 2),
+            "loyalty_tier": current_loyalty_tier,
+            "loyalty_member_since": customer.loyalty_member_since.isoformat() if customer.loyalty_member_since else None,
             "purchase_date": latest_purchase.isoformat() if latest_purchase else None,
             "credit_amount": round(credit, 2),
             "paid_amount": round(paid, 2),
@@ -1312,6 +1755,7 @@ def customer_credit_ledger(db: Session = Depends(get_db)):
             )],
         })
 
+    db.commit()
     return result
 
 

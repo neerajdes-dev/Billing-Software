@@ -292,3 +292,25 @@ export const deleteExpense = (expenseId) =>
   request(`/expenses/${expenseId}`, {
     method: "DELETE",
   });
+
+export const getLoyaltySettings = () =>
+  request("/loyalty/settings");
+
+export const updateLoyaltySettings = (data) =>
+  request("/loyalty/settings", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+
+export const getCustomerLoyalty = (customerId) =>
+  request(`/customers/${customerId}/loyalty`);
+
+export const adjustCustomerLoyalty = (customerId, data) =>
+  request(`/customers/${customerId}/loyalty-adjustment`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+
+export const getLoyaltyDashboard = () =>
+  request("/loyalty/dashboard");
+

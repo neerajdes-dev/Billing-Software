@@ -46,14 +46,17 @@ import PaymentsRoundedIcon from "@mui/icons-material/PaymentsRounded";
 import PersonSearchRoundedIcon from "@mui/icons-material/PersonSearchRounded";
 import LocalFireDepartmentRoundedIcon from "@mui/icons-material/LocalFireDepartmentRounded";
 import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
+import WorkspacePremiumRoundedIcon from "@mui/icons-material/WorkspacePremiumRounded";
 import AppLayout from "../components/AppLayout";
 import PageHeader from "../components/PageHeader";
 import InvoicePrint from "../components/InvoicePrint";
 import {
   createSale,
+  getCustomerLoyalty,
   getCustomers,
   getItemByBarcode,
   getItems,
+  getLoyaltySettings,
   getSettings,
 } from "../services/api";
 
@@ -238,6 +241,22 @@ export default function CreateBill() {
   const [selectedCustomer, setSelectedCustomer] =
     useState(null);
 
+  const [loyaltySummary, setLoyaltySummary] =
+    useState(null);
+  const [loyaltySettings, setLoyaltySettings] =
+    useState({
+      enabled: true,
+      earn_amount: 100,
+      points_per_earn_amount: 1,
+      point_value: 1,
+      minimum_redeem_points: 10,
+      max_redeem_percent: 20,
+    });
+  const [loyaltyRedeemPoints, setLoyaltyRedeemPoints] =
+    useState("");
+  const [loyaltyLoading, setLoyaltyLoading] =
+    useState(false);
+
   const [customer, setCustomer] = useState({
     customer_name: "",
     customer_mobile: "",
@@ -343,12 +362,17 @@ export default function CreateBill() {
       try {
         setLoadingProducts(true);
 
-        const [settingsResult, itemsResult, customerResult] =
-          await Promise.all([
-            getSettings(userId).catch(() => null),
-            getItems(),
-            getCustomers().catch(() => []),
-          ]);
+        const [
+          settingsResult,
+          itemsResult,
+          customerResult,
+          loyaltySettingsResult,
+        ] = await Promise.all([
+          getSettings(userId).catch(() => null),
+          getItems(),
+          getCustomers().catch(() => []),
+          getLoyaltySettings().catch(() => null),
+        ]);
 
         if (settingsResult && !settingsResult.detail) {
           setBusinessDetails({
@@ -370,6 +394,13 @@ export default function CreateBill() {
             ? customerResult
             : []
         );
+
+        if (loyaltySettingsResult) {
+          setLoyaltySettings((current) => ({
+            ...current,
+            ...loyaltySettingsResult,
+          }));
+        }
       } catch (error) {
         setMessage({
           type: "error",
@@ -434,7 +465,54 @@ export default function CreateBill() {
     discountType,
     amountReceived,
     splitPayment,
+    selectedCustomer,
+    loyaltyRedeemPoints,
+    loyaltySummary,
+    loyaltySettings,
   ]);
+
+  const handleCustomerChange = async (value) => {
+    setSelectedCustomer(value || null);
+    setLoyaltyRedeemPoints("");
+    setLoyaltySummary(null);
+
+    if (!value) {
+      setCustomer({
+        customer_name: "",
+        customer_mobile: "",
+      });
+      return;
+    }
+
+    setCustomer({
+      customer_name: value.customer_name || "",
+      customer_mobile:
+        value.mobile ||
+        value.customer_mobile ||
+        "",
+    });
+
+    if (!loyaltySettings.enabled) {
+      return;
+    }
+
+    try {
+      setLoyaltyLoading(true);
+      const summary = await getCustomerLoyalty(
+        value.id
+      );
+      setLoyaltySummary(summary);
+    } catch (error) {
+      setMessage({
+        type: "warning",
+        text:
+          error.message ||
+          "Unable to load loyalty details.",
+      });
+    } finally {
+      setLoyaltyLoading(false);
+    }
+  };
 
   const saveHeldBills = (next) => {
     setHeldBills(next);
@@ -722,10 +800,68 @@ export default function CreateBill() {
     grossTotal,
   ]);
 
-  const finalTotal = Math.max(
+  const preLoyaltyTotal = Math.max(
     grossTotal - discountAmount,
     0
   );
+
+  const requestedLoyaltyPoints = Math.max(
+    0,
+    toNumber(loyaltyRedeemPoints)
+  );
+
+  const maxLoyaltyDiscount =
+    preLoyaltyTotal *
+    Math.max(
+      0,
+      toNumber(
+        loyaltySettings.max_redeem_percent
+      )
+    ) /
+    100;
+
+  const availableLoyaltyPoints = Math.max(
+    0,
+    toNumber(loyaltySummary?.points)
+  );
+
+  const effectiveRedeemPoints = Math.min(
+    requestedLoyaltyPoints,
+    availableLoyaltyPoints,
+    toNumber(loyaltySettings.point_value) > 0
+      ? maxLoyaltyDiscount /
+          toNumber(loyaltySettings.point_value)
+      : 0
+  );
+
+  const loyaltyDiscount =
+    effectiveRedeemPoints *
+    toNumber(loyaltySettings.point_value);
+
+  const finalTotal = Math.max(
+    preLoyaltyTotal - loyaltyDiscount,
+    0
+  );
+
+  const estimatedLoyaltyEarn = selectedCustomer &&
+    loyaltySettings.enabled
+      ? (
+          finalTotal /
+          Math.max(
+            1,
+            toNumber(loyaltySettings.earn_amount)
+          )
+        ) *
+        toNumber(
+          loyaltySettings.points_per_earn_amount
+        ) *
+        ({
+          Regular: 1,
+          Silver: 1.25,
+          Gold: 1.5,
+          Platinum: 2,
+        }[loyaltySummary?.tier || "Regular"] || 1)
+      : 0;
 
   const splitTotal =
     toNumber(splitPayment.cash) +
@@ -745,6 +881,34 @@ export default function CreateBill() {
       : 0;
 
   const paymentValidation = () => {
+    if (
+      requestedLoyaltyPoints > 0 &&
+      !selectedCustomer
+    ) {
+      return "Select a registered customer to redeem loyalty points.";
+    }
+
+    if (
+      requestedLoyaltyPoints > 0 &&
+      requestedLoyaltyPoints <
+        toNumber(
+          loyaltySettings.minimum_redeem_points
+        )
+    ) {
+      return `Minimum loyalty redemption is ${Number(
+        loyaltySettings.minimum_redeem_points || 0
+      )} points.`;
+    }
+
+    if (
+      requestedLoyaltyPoints >
+      availableLoyaltyPoints
+    ) {
+      return `Customer has only ${availableLoyaltyPoints.toFixed(
+        2
+      )} loyalty points available.`;
+    }
+
     if (
       paymentMode === "Credit" &&
       !customer.customer_name.trim()
@@ -823,6 +987,8 @@ export default function CreateBill() {
       );
 
       const result = await createSale({
+        customer_id:
+          selectedCustomer?.id || null,
         customer_name:
           customer.customer_name.trim() ||
           null,
@@ -858,6 +1024,8 @@ export default function CreateBill() {
           paymentMode === "Cash"
             ? toNumber(amountReceived)
             : 0,
+        loyalty_points_to_redeem:
+          effectiveRedeemPoints,
         products: cart.map((item) => ({
           item_id: item.id,
           quantity: item.quantity,
@@ -932,6 +1100,22 @@ export default function CreateBill() {
           toNumber(
             result.change_return
           ),
+        loyalty_points_earned:
+          toNumber(
+            result.loyalty_points_earned
+          ),
+        loyalty_points_redeemed:
+          toNumber(
+            result.loyalty_points_redeemed
+          ),
+        loyalty_discount:
+          toNumber(
+            result.loyalty_discount
+          ),
+        loyalty_balance:
+          result.loyalty_balance,
+        loyalty_tier:
+          result.loyalty_tier,
         customer: {
           customer_name:
             customer.customer_name ||
@@ -971,6 +1155,7 @@ export default function CreateBill() {
       setBarcode("");
       setSelectedProduct(null);
       setDiscountValue("");
+      setLoyaltyRedeemPoints("");
       setAmountReceived("");
       setSplitPayment({
         cash: "",
@@ -1019,6 +1204,8 @@ export default function CreateBill() {
         "Held Bill",
       held_at: new Date().toISOString(),
       customer,
+      selectedCustomer,
+      loyaltyRedeemPoints,
       paymentMode,
       billDate,
       cart,
@@ -1067,6 +1254,25 @@ export default function CreateBill() {
         customer_mobile: "",
       }
     );
+    setSelectedCustomer(
+      held.selectedCustomer || null
+    );
+    setLoyaltyRedeemPoints(
+      held.loyaltyRedeemPoints || ""
+    );
+
+    if (held.selectedCustomer?.id) {
+      getCustomerLoyalty(
+        held.selectedCustomer.id
+      )
+        .then(setLoyaltySummary)
+        .catch(() =>
+          setLoyaltySummary(null)
+        );
+    } else {
+      setLoyaltySummary(null);
+    }
+
     setPaymentMode(
       held.paymentMode || "Cash"
     );
@@ -1136,6 +1342,8 @@ export default function CreateBill() {
       customer_mobile: "",
     });
     setSelectedCustomer(null);
+    setLoyaltySummary(null);
+    setLoyaltyRedeemPoints("");
     setSelectedProduct(null);
     setBarcode("");
     setDiscountValue("");
@@ -1159,6 +1367,8 @@ export default function CreateBill() {
       customer_mobile: "",
     });
     setSelectedCustomer(null);
+    setLoyaltySummary(null);
+    setLoyaltyRedeemPoints("");
     setSelectedProduct(null);
     setBarcode("");
     setPaymentMode("Cash");
@@ -1492,21 +1702,7 @@ export default function CreateBill() {
                         option?.id === value?.id
                       }
                       onChange={(_, value) => {
-                        setSelectedCustomer(
-                          value
-                        );
-
-                        if (value) {
-                          setCustomer({
-                            customer_name:
-                              value.customer_name ||
-                              "",
-                            customer_mobile:
-                              value.mobile ||
-                              value.customer_mobile ||
-                              "",
-                          });
-                        }
+                        handleCustomerChange(value);
                       }}
                       renderInput={(params) => (
                         <TextField
@@ -1575,6 +1771,149 @@ export default function CreateBill() {
                       }
                     />
                   </Grid>
+
+                  {selectedCustomer &&
+                    loyaltySettings.enabled && (
+                    <Grid size={{ xs: 12 }}>
+                      <Paper
+                        variant="outlined"
+                        sx={{
+                          p: 2,
+                          borderRadius: 3,
+                          bgcolor: "background.default",
+                        }}
+                      >
+                        <Stack
+                          direction={{
+                            xs: "column",
+                            md: "row",
+                          }}
+                          justifyContent="space-between"
+                          spacing={2}
+                        >
+                          <Stack
+                            direction="row"
+                            spacing={1.25}
+                            alignItems="center"
+                          >
+                            <Box
+                              sx={{
+                                width: 42,
+                                height: 42,
+                                borderRadius: 2.5,
+                                bgcolor: "primary.light",
+                                color: "primary.main",
+                                display: "grid",
+                                placeItems: "center",
+                              }}
+                            >
+                              <WorkspacePremiumRoundedIcon />
+                            </Box>
+
+                            <Box>
+                              <Stack
+                                direction="row"
+                                spacing={1}
+                                alignItems="center"
+                              >
+                                <Typography fontWeight={900}>
+                                  Loyalty Member
+                                </Typography>
+                                <Chip
+                                  size="small"
+                                  color={
+                                    loyaltySummary?.tier ===
+                                    "Platinum"
+                                      ? "secondary"
+                                      : loyaltySummary?.tier ===
+                                        "Gold"
+                                      ? "warning"
+                                      : loyaltySummary?.tier ===
+                                        "Silver"
+                                      ? "primary"
+                                      : "default"
+                                  }
+                                  label={
+                                    loyaltySummary?.tier ||
+                                    "Regular"
+                                  }
+                                />
+                              </Stack>
+
+                              <Typography
+                                variant="body2"
+                                color="text.secondary"
+                              >
+                                {loyaltyLoading
+                                  ? "Loading loyalty balance..."
+                                  : `${Number(
+                                      loyaltySummary?.points ||
+                                        0
+                                    ).toFixed(
+                                      2
+                                    )} points available · ${money(
+                                      loyaltySummary?.redemption_value ||
+                                        0
+                                    )} value`}
+                              </Typography>
+                            </Box>
+                          </Stack>
+
+                          <Stack
+                            direction={{
+                              xs: "column",
+                              sm: "row",
+                            }}
+                            spacing={1.25}
+                            alignItems={{
+                              sm: "center",
+                            }}
+                          >
+                            <Box
+                              textAlign={{
+                                sm: "right",
+                              }}
+                            >
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                              >
+                                Lifetime Purchase
+                              </Typography>
+                              <Typography fontWeight={800}>
+                                {money(
+                                  loyaltySummary?.lifetime_spend ||
+                                    0
+                                )}
+                              </Typography>
+                            </Box>
+
+                            <Box
+                              textAlign={{
+                                sm: "right",
+                              }}
+                            >
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                              >
+                                Estimated Points
+                              </Typography>
+                              <Typography
+                                fontWeight={800}
+                                color="success.main"
+                              >
+                                +
+                                {estimatedLoyaltyEarn.toFixed(
+                                  2
+                                )}
+                              </Typography>
+                            </Box>
+                          </Stack>
+                        </Stack>
+                      </Paper>
+                    </Grid>
+                  )}
 
                   <Grid size={{ xs: 12 }}>
                     <Divider sx={{ my: 0.5 }} />
@@ -2348,6 +2687,33 @@ export default function CreateBill() {
                     />
                   </Stack>
 
+                  {selectedCustomer &&
+                    loyaltySettings.enabled && (
+                    <TextField
+                      fullWidth
+                      type="number"
+                      label="Redeem Loyalty Points"
+                      value={loyaltyRedeemPoints}
+                      onChange={(event) =>
+                        setLoyaltyRedeemPoints(
+                          event.target.value
+                        )
+                      }
+                      helperText={`Available ${availableLoyaltyPoints.toFixed(
+                        2
+                      )} pts · Discount ${money(
+                        loyaltyDiscount
+                      )} · Max ${Number(
+                        loyaltySettings.max_redeem_percent ||
+                          0
+                      )}% of bill`}
+                      inputProps={{
+                        min: 0,
+                        max: availableLoyaltyPoints,
+                      }}
+                    />
+                  )}
+
                   {paymentMode === "Cash" && (
                     <TextField
                       fullWidth
@@ -2539,6 +2905,20 @@ export default function CreateBill() {
                             {money(
                               discountAmount
                             )}
+                          </Typography>
+                        </Stack>
+                      )}
+
+                      {loyaltyDiscount > 0 && (
+                        <Stack
+                          direction="row"
+                          justifyContent="space-between"
+                        >
+                          <Typography color="secondary.main">
+                            Loyalty Discount
+                          </Typography>
+                          <Typography color="secondary.main">
+                            -{money(loyaltyDiscount)}
                           </Typography>
                         </Stack>
                       )}
@@ -2924,6 +3304,16 @@ export default function CreateBill() {
               generatedInvoice.amount_received,
             change_return:
               generatedInvoice.change_return,
+            loyalty_points_earned:
+              generatedInvoice.loyalty_points_earned,
+            loyalty_points_redeemed:
+              generatedInvoice.loyalty_points_redeemed,
+            loyalty_discount:
+              generatedInvoice.loyalty_discount,
+            loyalty_balance:
+              generatedInvoice.loyalty_balance,
+            loyalty_tier:
+              generatedInvoice.loyalty_tier,
           }}
           customer={
             generatedInvoice.customer

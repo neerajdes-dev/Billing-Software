@@ -78,6 +78,7 @@ class SaleProduct(BaseModel):
     item_id: int
     quantity: int
 class SaleCreate(BaseModel):
+    customer_id: int | None = None
     customer_name: str | None = None
     customer_mobile: str | None = None
     payment_mode: str
@@ -88,7 +89,26 @@ class SaleCreate(BaseModel):
     online_amount: float = 0
     credit_amount: float = 0
     amount_received: float = 0
+    loyalty_points_to_redeem: float = 0
     products: List[SaleProduct]
+
+class LoyaltySettingsUpdate(BaseModel):
+    enabled: bool = True
+    earn_amount: float = 100
+    points_per_earn_amount: float = 1
+    point_value: float = 1
+    minimum_redeem_points: float = 10
+    max_redeem_percent: float = 20
+    silver_threshold: float = 10000
+    gold_threshold: float = 25000
+    platinum_threshold: float = 50000
+
+
+class LoyaltyAdjustmentCreate(BaseModel):
+    points: float
+    note: str | None = None
+
+
 class DealerCreate(BaseModel):
     dealer_name: str
     mobile: str
