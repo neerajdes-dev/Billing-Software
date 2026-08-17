@@ -704,16 +704,19 @@ export default function Purchase() {
                     {...params}
                     label="Search Product"
                     placeholder="Product name or barcode"
-                    InputProps={{
-                      ...params.InputProps,
-                      startAdornment: (
-                        <>
-                          <InputAdornment position="start">
-                            <SearchRoundedIcon />
-                          </InputAdornment>
-                          {params.InputProps.startAdornment}
-                        </>
-                      ),
+                    slotProps={{
+                      ...params.slotProps,
+                      input: {
+                        ...(params.slotProps?.input || {}),
+                        startAdornment: (
+                          <>
+                            <InputAdornment position="start">
+                              <SearchRoundedIcon />
+                            </InputAdornment>
+                            {params.slotProps?.input?.startAdornment || null}
+                          </>
+                        ),
+                      },
                     }}
                   />
                 )}
