@@ -1950,8 +1950,12 @@ export default function CreateBill() {
                       xs: 12,
                       md: 5,
                     }}
+                    sx={{ minWidth: 0 }}
                   >
                     <Autocomplete
+                      fullWidth
+                      autoHighlight
+                      openOnFocus
                       options={availableProducts}
                       value={selectedProduct}
                       loading={loadingProducts}
@@ -1990,11 +1994,14 @@ export default function CreateBill() {
                           .slice(0, 20);
                       }}
                       onChange={(_, value) => {
-                        if (value) {
-                          addProductToCart(
-                            value
-                          );
-                        }
+                        if (!value) return;
+
+                        addProductToCart(value);
+                        setSelectedProduct(null);
+
+                        requestAnimationFrame(() => {
+                          productSearchRef.current?.focus();
+                        });
                       }}
                       renderOption={(
                         props,
