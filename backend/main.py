@@ -663,6 +663,12 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
         )
 
     if payment_mode == "Cash":
+        if amount_received > 0 and amount_received + 0.001 < final_amount:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Amount received cannot be less than final amount {final_amount:.2f}",
+            )
+
         received_for_change = amount_received if amount_received > 0 else final_amount
         change_return = max(received_for_change - final_amount, 0.0)
         amount_received = received_for_change

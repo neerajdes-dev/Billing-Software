@@ -845,12 +845,14 @@ export default function CreateBill() {
 
   const estimatedLoyaltyEarn = selectedCustomer &&
     loyaltySettings.enabled
-      ? (
+      ? Math.floor(
           finalTotal /
-          Math.max(
-            1,
-            toNumber(loyaltySettings.earn_amount)
-          )
+            Math.max(
+              1,
+              toNumber(
+                loyaltySettings.earn_amount
+              )
+            )
         ) *
         toNumber(
           loyaltySettings.points_per_earn_amount
@@ -881,6 +883,34 @@ export default function CreateBill() {
       : 0;
 
   const paymentValidation = () => {
+    const invalidCartItem = cart.find(
+      (item) =>
+        Number(item.quantity || 0) <= 0 ||
+        Number(item.quantity || 0) >
+          Number(item.stock || 0) ||
+        isExpired(item)
+    );
+
+    if (invalidCartItem) {
+      if (isExpired(invalidCartItem)) {
+        return `${invalidCartItem.item_name} is expired and cannot be billed.`;
+      }
+
+      return `Check quantity for ${invalidCartItem.item_name}. Available stock: ${Number(
+        invalidCartItem.stock || 0
+      )}.`;
+    }
+
+    if (
+      paymentMode === "Cash" &&
+      toNumber(amountReceived) > 0 &&
+      toNumber(amountReceived) < finalTotal
+    ) {
+      return `Amount received cannot be less than ${money(
+        finalTotal
+      )}. Leave it blank if the customer pays the exact amount.`;
+    }
+
     if (
       requestedLoyaltyPoints > 0 &&
       !selectedCustomer
@@ -939,6 +969,10 @@ export default function CreateBill() {
   };
 
   const generateBill = async ({ printAfter = false } = {}) => {
+    if (saving) {
+      return;
+    }
+
     if (!cart.length) {
       setMessage({
         type: "warning",
@@ -1060,8 +1094,11 @@ export default function CreateBill() {
           totalMrp,
         total_saving:
           toNumber(result.total_saving) +
-          discountAmount ||
-          productSaving + discountAmount,
+            discountAmount +
+            toNumber(result.loyalty_discount) ||
+          productSaving +
+            discountAmount +
+            loyaltyDiscount,
         total_amount: finalAmount,
         paid_amount:
           paymentMode === "Credit"
@@ -1129,6 +1166,39 @@ export default function CreateBill() {
       setGeneratedInvoice(
         invoiceSnapshot
       );
+
+      if (selectedCustomer && loyaltySettings.enabled) {
+        setLoyaltySummary((current) => ({
+          ...(current || {}),
+          points:
+            result.loyalty_balance ??
+            current?.points ??
+            0,
+          tier:
+            result.loyalty_tier ||
+            current?.tier ||
+            "Regular",
+          lifetime_spend:
+            toNumber(
+              current?.lifetime_spend
+            ) + finalAmount,
+          total_bills:
+            Number(
+              current?.total_bills || 0
+            ) + 1,
+          last_purchase:
+            result.bill_date ||
+            billDate,
+          redemption_value:
+            toNumber(
+              result.loyalty_balance ??
+                current?.points
+            ) *
+            toNumber(
+              loyaltySettings.point_value
+            ),
+        }));
+      }
 
       setItems((current) =>
         current.map((item) => {
@@ -1226,6 +1296,10 @@ export default function CreateBill() {
       customer_mobile: "",
     });
     setSelectedCustomer(null);
+    setLoyaltySummary(null);
+    setLoyaltyRedeemPoints("");
+    setSelectedProduct(null);
+    setBarcode("");
     setDiscountValue("");
     setAmountReceived("");
     setSplitPayment({
@@ -1308,6 +1382,10 @@ export default function CreateBill() {
       type: "success",
       text: `${held.note || "Held bill"} resumed.`,
     });
+
+    setTimeout(() => {
+      productSearchRef.current?.focus?.();
+    }, 100);
   };
 
   const deleteHeldBill = (heldId) => {
@@ -1740,13 +1818,26 @@ export default function CreateBill() {
                       value={
                         customer.customer_name
                       }
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        const value =
+                          event.target.value;
+
                         setCustomer({
                           ...customer,
-                          customer_name:
-                            event.target.value,
-                        })
-                      }
+                          customer_name: value,
+                        });
+
+                        if (
+                          selectedCustomer &&
+                          value !==
+                            (selectedCustomer.customer_name ||
+                              "")
+                        ) {
+                          setSelectedCustomer(null);
+                          setLoyaltySummary(null);
+                          setLoyaltyRedeemPoints("");
+                        }
+                      }}
                     />
                   </Grid>
 
@@ -1762,13 +1853,27 @@ export default function CreateBill() {
                       value={
                         customer.customer_mobile
                       }
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        const value =
+                          event.target.value;
+
                         setCustomer({
                           ...customer,
-                          customer_mobile:
-                            event.target.value,
-                        })
-                      }
+                          customer_mobile: value,
+                        });
+
+                        if (
+                          selectedCustomer &&
+                          value !==
+                            (selectedCustomer.mobile ||
+                              selectedCustomer.customer_mobile ||
+                              "")
+                        ) {
+                          setSelectedCustomer(null);
+                          setLoyaltySummary(null);
+                          setLoyaltyRedeemPoints("");
+                        }
+                      }}
                     />
                   </Grid>
 
