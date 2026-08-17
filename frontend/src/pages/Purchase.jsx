@@ -86,6 +86,49 @@ const emptyLine = () => ({
   expiry_date: "",
 });
 
+
+function PurchaseDateField({
+  label,
+  value,
+  onChange,
+  fullWidth = true,
+}) {
+  return (
+    <Box sx={{ width: fullWidth ? "100%" : "auto" }}>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{
+          display: "block",
+          mb: 0.55,
+          ml: 0.25,
+          fontWeight: 600,
+        }}
+      >
+        {label}
+      </Typography>
+
+      <TextField
+        fullWidth={fullWidth}
+        type="date"
+        value={value || ""}
+        onChange={onChange}
+        slotProps={{
+          htmlInput: {
+            "aria-label": label,
+          },
+        }}
+        sx={{
+          "& input[type='date']": {
+            minHeight: 22,
+            py: 1.15,
+          },
+        }}
+      />
+    </Box>
+  );
+}
+
 export default function Purchase() {
   const [dealers, setDealers] = useState([]);
   const [items, setItems] = useState([]);
@@ -620,11 +663,8 @@ export default function Purchase() {
             </Grid>
 
             <Grid size={{ xs: 12, md: 3 }}>
-              <TextField
-                fullWidth
-                type="date"
+              <PurchaseDateField
                 label="Purchase Date"
-                InputLabelProps={{ shrink: true }}
                 value={header.purchase_date}
                 onChange={(e) =>
                   updateHeader(
@@ -820,11 +860,8 @@ export default function Purchase() {
             </Grid>
 
             <Grid size={{ xs: 12, sm: 4 }}>
-              <TextField
-                fullWidth
-                type="date"
+              <PurchaseDateField
                 label="Manufacturing Date"
-                InputLabelProps={{ shrink: true }}
                 value={line.manufacturing_date}
                 onChange={(e) =>
                   updateLine(
@@ -836,11 +873,8 @@ export default function Purchase() {
             </Grid>
 
             <Grid size={{ xs: 12, sm: 4 }}>
-              <TextField
-                fullWidth
-                type="date"
+              <PurchaseDateField
                 label="Expiry Date"
-                InputLabelProps={{ shrink: true }}
                 value={line.expiry_date}
                 onChange={(e) =>
                   updateLine(
@@ -1495,10 +1529,8 @@ export default function Purchase() {
                 })
               }
             />
-            <TextField
-              type="date"
+            <PurchaseDateField
               label="Return Date"
-              InputLabelProps={{ shrink: true }}
               value={returnForm.return_date}
               onChange={(e) =>
                 setReturnForm({
