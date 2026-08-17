@@ -133,6 +133,39 @@ class DealerPaymentCreate(BaseModel):
     payment_date: str | None = None
     reference: str | None = None
     note: str | None = None
+
+class PurchaseLineCreate(BaseModel):
+    item_id: int
+    quantity: int
+    purchase_price: float
+    mrp: float | None = None
+    sale_price: float | None = None
+    gst_percent: float | None = None
+    batch_number: str | None = None
+    manufacturing_date: date | None = None
+    expiry_date: date | None = None
+
+
+class PurchaseCreate(BaseModel):
+    dealer_id: int
+    invoice_number: str
+    purchase_date: date
+    discount_amount: float = 0
+    freight_amount: float = 0
+    round_off: float = 0
+    paid_amount: float = 0
+    payment_mode: str = "Credit"
+    note: str | None = None
+    items: List[PurchaseLineCreate]
+
+
+class PurchaseReturnCreate(BaseModel):
+    purchase_item_id: int
+    quantity: int
+    reason: str | None = None
+    return_date: date | None = None
+
+
 class ExpenseCreate(BaseModel):
     expense_name: str
     category: str = "Miscellaneous"

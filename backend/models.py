@@ -97,6 +97,7 @@ class Item(Base):
         back_populates="item",
         cascade="all, delete-orphan",
     )
+    purchase_items = relationship("PurchaseItem", back_populates="item")
 
 
 class StockAdjustment(Base):
@@ -144,6 +145,8 @@ class SaleItem(Base):
     quantity = Column(Integer)
     mrp = Column(Float, default=0)
     rate = Column(Float)
+    cost_price = Column(Float, default=0)
+    profit_amount = Column(Float, default=0)
     gst_percent = Column(Float)
     amount = Column(Float)
     saving = Column(Float, default=0)
@@ -163,6 +166,7 @@ class Dealer(Base):
     bill_date = Column(DateTime, default=datetime.now)
     bills = relationship("DealerBill", back_populates="dealer", cascade="all, delete-orphan")
     payments = relationship("DealerPayment", back_populates="dealer", cascade="all, delete-orphan")
+    purchases = relationship("Purchase", back_populates="dealer", cascade="all, delete-orphan")
 
 class DealerBill(Base):
     __tablename__ = "dealer_bills"
@@ -185,6 +189,70 @@ class DealerPayment(Base):
     reference = Column(String)
     note = Column(String)
     dealer = relationship("Dealer", back_populates="payments")
+
+
+class Purchase(Base):
+    __tablename__ = "purchases"
+    id = Column(Integer, primary_key=True, index=True)
+    dealer_id = Column(Integer, ForeignKey("dealers.id"), nullable=False)
+    invoice_number = Column(String, nullable=False)
+    purchase_date = Column(DateTime, default=datetime.now)
+    subtotal = Column(Float, default=0)
+    gst_amount = Column(Float, default=0)
+    discount_amount = Column(Float, default=0)
+    freight_amount = Column(Float, default=0)
+    round_off = Column(Float, default=0)
+    total_amount = Column(Float, default=0)
+    paid_amount = Column(Float, default=0)
+    outstanding_amount = Column(Float, default=0)
+    payment_mode = Column(String, default="Credit")
+    note = Column(String)
+    created_at = Column(DateTime, default=datetime.now)
+
+    dealer = relationship("Dealer", back_populates="purchases")
+    items = relationship("PurchaseItem", back_populates="purchase", cascade="all, delete-orphan")
+    returns = relationship("PurchaseReturn", back_populates="purchase", cascade="all, delete-orphan")
+
+
+class PurchaseItem(Base):
+    __tablename__ = "purchase_items"
+    id = Column(Integer, primary_key=True, index=True)
+    purchase_id = Column(Integer, ForeignKey("purchases.id"), nullable=False)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
+    item_name = Column(String, nullable=False)
+    quantity = Column(Integer, nullable=False)
+    purchase_price = Column(Float, nullable=False, default=0)
+    mrp = Column(Float, default=0)
+    sale_price = Column(Float, default=0)
+    gst_percent = Column(Float, default=0)
+    taxable_amount = Column(Float, default=0)
+    gst_amount = Column(Float, default=0)
+    line_total = Column(Float, default=0)
+    batch_number = Column(String)
+    manufacturing_date = Column(Date)
+    expiry_date = Column(Date)
+    returned_quantity = Column(Integer, default=0)
+
+    purchase = relationship("Purchase", back_populates="items")
+    item = relationship("Item", back_populates="purchase_items")
+
+
+class PurchaseReturn(Base):
+    __tablename__ = "purchase_returns"
+    id = Column(Integer, primary_key=True, index=True)
+    purchase_id = Column(Integer, ForeignKey("purchases.id"), nullable=False)
+    purchase_item_id = Column(Integer, ForeignKey("purchase_items.id"), nullable=False)
+    dealer_id = Column(Integer, ForeignKey("dealers.id"), nullable=False)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    return_amount = Column(Float, nullable=False, default=0)
+    reason = Column(String)
+    return_date = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=datetime.now)
+
+    purchase = relationship("Purchase", back_populates="returns")
+    purchase_item = relationship("PurchaseItem")
+
 
 class Expense(Base):
     __tablename__ = "expenses"

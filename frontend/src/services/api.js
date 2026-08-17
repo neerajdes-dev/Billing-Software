@@ -314,3 +314,31 @@ export const adjustCustomerLoyalty = (customerId, data) =>
 export const getLoyaltyDashboard = () =>
   request("/loyalty/dashboard");
 
+
+
+export const getPurchases = () =>
+  request("/purchases");
+
+export const getPurchaseDashboard = () =>
+  request("/purchases/dashboard");
+
+export const getPurchaseDetail = (purchaseId) =>
+  request(`/purchases/${purchaseId}`);
+
+export const createPurchase = (data) =>
+  request("/purchases", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+
+export const createPurchaseReturn = (data) =>
+  request("/purchase-returns", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+
+export const getPurchaseReturns = () =>
+  request("/purchase-returns");
+
+export const getProfitSummary = () =>
+  request("/reports/profit-summary");

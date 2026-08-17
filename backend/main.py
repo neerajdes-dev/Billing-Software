@@ -56,6 +56,62 @@ def run_database_migrations():
         "ALTER TABLE sales ADD COLUMN IF NOT EXISTS loyalty_points_earned DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE sales ADD COLUMN IF NOT EXISTS loyalty_points_redeemed DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE sales ADD COLUMN IF NOT EXISTS loyalty_discount DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS cost_price DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS profit_amount DOUBLE PRECISION DEFAULT 0",
+        """
+        CREATE TABLE IF NOT EXISTS purchases (
+            id SERIAL PRIMARY KEY,
+            dealer_id INTEGER NOT NULL REFERENCES dealers(id) ON DELETE CASCADE,
+            invoice_number VARCHAR NOT NULL,
+            purchase_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            subtotal DOUBLE PRECISION DEFAULT 0,
+            gst_amount DOUBLE PRECISION DEFAULT 0,
+            discount_amount DOUBLE PRECISION DEFAULT 0,
+            freight_amount DOUBLE PRECISION DEFAULT 0,
+            round_off DOUBLE PRECISION DEFAULT 0,
+            total_amount DOUBLE PRECISION DEFAULT 0,
+            paid_amount DOUBLE PRECISION DEFAULT 0,
+            outstanding_amount DOUBLE PRECISION DEFAULT 0,
+            payment_mode VARCHAR DEFAULT 'Credit',
+            note VARCHAR,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS purchase_items (
+            id SERIAL PRIMARY KEY,
+            purchase_id INTEGER NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
+            item_id INTEGER NOT NULL REFERENCES items(id),
+            item_name VARCHAR NOT NULL,
+            quantity INTEGER NOT NULL,
+            purchase_price DOUBLE PRECISION NOT NULL DEFAULT 0,
+            mrp DOUBLE PRECISION DEFAULT 0,
+            sale_price DOUBLE PRECISION DEFAULT 0,
+            gst_percent DOUBLE PRECISION DEFAULT 0,
+            taxable_amount DOUBLE PRECISION DEFAULT 0,
+            gst_amount DOUBLE PRECISION DEFAULT 0,
+            line_total DOUBLE PRECISION DEFAULT 0,
+            batch_number VARCHAR,
+            manufacturing_date DATE,
+            expiry_date DATE,
+            returned_quantity INTEGER DEFAULT 0
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS purchase_returns (
+            id SERIAL PRIMARY KEY,
+            purchase_id INTEGER NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
+            purchase_item_id INTEGER NOT NULL REFERENCES purchase_items(id) ON DELETE CASCADE,
+            dealer_id INTEGER NOT NULL REFERENCES dealers(id) ON DELETE CASCADE,
+            item_id INTEGER NOT NULL REFERENCES items(id),
+            quantity INTEGER NOT NULL,
+            return_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+            reason VARCHAR,
+            return_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+
         "ALTER TABLE customers ADD COLUMN IF NOT EXISTS loyalty_points DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE customers ADD COLUMN IF NOT EXISTS loyalty_tier VARCHAR DEFAULT 'Regular'",
         "ALTER TABLE customers ADD COLUMN IF NOT EXISTS loyalty_member_since TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
@@ -533,8 +589,10 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
             )
 
         rate = to_float(item.sale_price)
+        cost_price = to_float(item.purchase_price)
         mrp = max(to_float(item.mrp), rate)
         base_amount = rate * qty
+        profit_amount = max((rate - cost_price) * qty, 0)
         mrp_amount = mrp * qty
         saving = max(mrp_amount - base_amount, 0)
         item_gst = base_amount * to_float(item.gst_percent) / 100
@@ -554,6 +612,8 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
                 "quantity": qty,
                 "mrp": mrp,
                 "rate": rate,
+                "cost_price": cost_price,
+                "profit_amount": profit_amount,
                 "gst_percent": item.gst_percent,
                 "amount": line_total,
                 "saving": saving,
@@ -912,7 +972,36 @@ def add_dealer_payment(data: schemas.DealerPaymentCreate, db: Session = Depends(
         except ValueError as exc: raise HTTPException(status_code=400,detail="Invalid payment date") from exc
     payment=models.DealerPayment(dealer_id=data.dealer_id,paid_amount=data.paid_amount,
       payment_mode=data.payment_mode,payment_date=payment_date,reference=data.reference,note=data.note)
-    db.add(payment); db.commit(); db.refresh(payment)
+    db.add(payment)
+
+    # Allocate supplier payments against the oldest open purchases so
+    # purchase-level outstanding values remain aligned with the supplier ledger.
+    remaining_payment = to_float(data.paid_amount)
+    open_purchases = (
+        db.query(models.Purchase)
+        .filter(
+            models.Purchase.dealer_id == data.dealer_id,
+            models.Purchase.outstanding_amount > 0,
+        )
+        .order_by(models.Purchase.purchase_date.asc(), models.Purchase.id.asc())
+        .all()
+    )
+
+    for purchase in open_purchases:
+        if remaining_payment <= 0:
+            break
+
+        open_amount = max(to_float(purchase.outstanding_amount), 0)
+        allocation = min(open_amount, remaining_payment)
+
+        purchase.paid_amount = min(
+            to_float(purchase.total_amount),
+            to_float(purchase.paid_amount) + allocation,
+        )
+        purchase.outstanding_amount = max(open_amount - allocation, 0)
+        remaining_payment -= allocation
+
+    db.commit(); db.refresh(payment)
     return {"message":"Dealer payment added successfully","payment_id":payment.id}
 
 
@@ -1842,6 +1931,483 @@ def dealer_payment_history(dealer_id: int, db: Session = Depends(get_db)):
         "reference": getattr(p, "reference", None),
         "note": getattr(p, "note", None),
     } for p in sorted(dealer.payments, key=lambda x: x.payment_date or datetime.min, reverse=True)]
+
+
+
+@app.get("/purchases")
+def get_purchases(db: Session = Depends(get_db)):
+    rows = (
+        db.query(models.Purchase)
+        .order_by(models.Purchase.purchase_date.desc(), models.Purchase.id.desc())
+        .all()
+    )
+
+    return [
+        {
+            "id": row.id,
+            "dealer_id": row.dealer_id,
+            "dealer_name": row.dealer.dealer_name if row.dealer else "-",
+            "invoice_number": row.invoice_number,
+            "purchase_date": row.purchase_date.strftime("%Y-%m-%d") if row.purchase_date else None,
+            "subtotal": round(to_float(row.subtotal), 2),
+            "gst_amount": round(to_float(row.gst_amount), 2),
+            "discount_amount": round(to_float(row.discount_amount), 2),
+            "freight_amount": round(to_float(row.freight_amount), 2),
+            "round_off": round(to_float(row.round_off), 2),
+            "total_amount": round(to_float(row.total_amount), 2),
+            "paid_amount": round(to_float(row.paid_amount), 2),
+            "outstanding_amount": round(to_float(row.outstanding_amount), 2),
+            "payment_mode": row.payment_mode,
+            "item_count": len(row.items),
+            "note": row.note,
+        }
+        for row in rows
+    ]
+
+
+@app.get("/purchases/dashboard")
+def purchase_dashboard(db: Session = Depends(get_db)):
+    purchases = db.query(models.Purchase).all()
+    returns = db.query(models.PurchaseReturn).all()
+
+    purchase_total = sum(to_float(row.total_amount) for row in purchases)
+    paid_total = sum(to_float(row.paid_amount) for row in purchases)
+    outstanding_total = sum(to_float(row.outstanding_amount) for row in purchases)
+    return_total = sum(to_float(row.return_amount) for row in returns)
+
+    return {
+        "purchase_count": len(purchases),
+        "purchase_total": round(purchase_total, 2),
+        "paid_total": round(paid_total, 2),
+        "outstanding_total": round(outstanding_total, 2),
+        "return_total": round(return_total, 2),
+        "net_purchase": round(max(purchase_total - return_total, 0), 2),
+    }
+
+
+@app.get("/purchases/{purchase_id}")
+def get_purchase_detail(purchase_id: int, db: Session = Depends(get_db)):
+    purchase = (
+        db.query(models.Purchase)
+        .filter(models.Purchase.id == purchase_id)
+        .first()
+    )
+
+    if not purchase:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+
+    return {
+        "id": purchase.id,
+        "dealer_id": purchase.dealer_id,
+        "dealer_name": purchase.dealer.dealer_name if purchase.dealer else "-",
+        "invoice_number": purchase.invoice_number,
+        "purchase_date": purchase.purchase_date.strftime("%Y-%m-%d") if purchase.purchase_date else None,
+        "subtotal": round(to_float(purchase.subtotal), 2),
+        "gst_amount": round(to_float(purchase.gst_amount), 2),
+        "discount_amount": round(to_float(purchase.discount_amount), 2),
+        "freight_amount": round(to_float(purchase.freight_amount), 2),
+        "round_off": round(to_float(purchase.round_off), 2),
+        "total_amount": round(to_float(purchase.total_amount), 2),
+        "paid_amount": round(to_float(purchase.paid_amount), 2),
+        "outstanding_amount": round(to_float(purchase.outstanding_amount), 2),
+        "payment_mode": purchase.payment_mode,
+        "note": purchase.note,
+        "items": [
+            {
+                "id": row.id,
+                "item_id": row.item_id,
+                "item_name": row.item_name,
+                "quantity": row.quantity,
+                "returned_quantity": row.returned_quantity or 0,
+                "available_to_return": max(
+                    int(row.quantity or 0) - int(row.returned_quantity or 0),
+                    0,
+                ),
+                "purchase_price": round(to_float(row.purchase_price), 2),
+                "mrp": round(to_float(row.mrp), 2),
+                "sale_price": round(to_float(row.sale_price), 2),
+                "gst_percent": round(to_float(row.gst_percent), 2),
+                "taxable_amount": round(to_float(row.taxable_amount), 2),
+                "gst_amount": round(to_float(row.gst_amount), 2),
+                "line_total": round(to_float(row.line_total), 2),
+                "batch_number": row.batch_number,
+                "manufacturing_date": row.manufacturing_date.isoformat() if row.manufacturing_date else None,
+                "expiry_date": row.expiry_date.isoformat() if row.expiry_date else None,
+                "margin_amount": round(
+                    max(to_float(row.sale_price) - to_float(row.purchase_price), 0),
+                    2,
+                ),
+                "margin_percent": round(
+                    (
+                        max(to_float(row.sale_price) - to_float(row.purchase_price), 0)
+                        / to_float(row.sale_price)
+                        * 100
+                    )
+                    if to_float(row.sale_price) > 0
+                    else 0,
+                    2,
+                ),
+            }
+            for row in purchase.items
+        ],
+    }
+
+
+@app.post("/purchases")
+def create_purchase(data: schemas.PurchaseCreate, db: Session = Depends(get_db)):
+    dealer = (
+        db.query(models.Dealer)
+        .filter(models.Dealer.id == data.dealer_id)
+        .first()
+    )
+
+    if not dealer:
+        raise HTTPException(status_code=404, detail="Supplier / dealer not found")
+
+    if not str(data.invoice_number or "").strip():
+        raise HTTPException(status_code=400, detail="Supplier invoice number is required")
+
+    if not data.items:
+        raise HTTPException(status_code=400, detail="Add at least one purchase item")
+
+    duplicate = (
+        db.query(models.Purchase)
+        .filter(
+            models.Purchase.dealer_id == data.dealer_id,
+            models.Purchase.invoice_number == str(data.invoice_number).strip(),
+        )
+        .first()
+    )
+
+    if duplicate:
+        raise HTTPException(
+            status_code=400,
+            detail="This supplier invoice number already exists for the selected supplier",
+        )
+
+    subtotal = 0.0
+    gst_amount = 0.0
+    purchase_lines = []
+
+    for line in data.items:
+        item = db.query(models.Item).filter(models.Item.id == line.item_id).first()
+
+        if not item:
+            raise HTTPException(status_code=404, detail=f"Item {line.item_id} not found")
+
+        qty = int(line.quantity or 0)
+        purchase_price = max(to_float(line.purchase_price), 0)
+
+        if qty <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Quantity must be greater than zero for {item.item_name}",
+            )
+
+        if purchase_price <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Purchase price must be greater than zero for {item.item_name}",
+            )
+
+        gst_percent = max(
+            0.0,
+            to_float(line.gst_percent if line.gst_percent is not None else item.gst_percent),
+        )
+        taxable = purchase_price * qty
+        line_gst = taxable * gst_percent / 100
+        line_total = taxable + line_gst
+
+        subtotal += taxable
+        gst_amount += line_gst
+
+        purchase_lines.append(
+            {
+                "item": item,
+                "quantity": qty,
+                "purchase_price": purchase_price,
+                "mrp": to_float(line.mrp if line.mrp is not None else item.mrp),
+                "sale_price": to_float(
+                    line.sale_price if line.sale_price is not None else item.sale_price
+                ),
+                "gst_percent": gst_percent,
+                "taxable_amount": taxable,
+                "gst_amount": line_gst,
+                "line_total": line_total,
+                "batch_number": line.batch_number,
+                "manufacturing_date": line.manufacturing_date,
+                "expiry_date": line.expiry_date,
+            }
+        )
+
+    discount = max(0.0, min(to_float(data.discount_amount), subtotal + gst_amount))
+    freight = max(0.0, to_float(data.freight_amount))
+    round_off = to_float(data.round_off)
+    total_amount = max(subtotal + gst_amount - discount + freight + round_off, 0)
+
+    paid_amount = max(0.0, min(to_float(data.paid_amount), total_amount))
+    outstanding = max(total_amount - paid_amount, 0)
+
+    purchase_date = datetime.combine(data.purchase_date, datetime.min.time())
+
+    purchase = models.Purchase(
+        dealer_id=dealer.id,
+        invoice_number=str(data.invoice_number).strip(),
+        purchase_date=purchase_date,
+        subtotal=subtotal,
+        gst_amount=gst_amount,
+        discount_amount=discount,
+        freight_amount=freight,
+        round_off=round_off,
+        total_amount=total_amount,
+        paid_amount=paid_amount,
+        outstanding_amount=outstanding,
+        payment_mode=data.payment_mode or "Credit",
+        note=data.note,
+        created_at=purchase_date,
+    )
+
+    db.add(purchase)
+    db.flush()
+
+    for line in purchase_lines:
+        item = line.pop("item")
+        previous_stock = int(item.stock or 0)
+        new_stock = previous_stock + int(line["quantity"])
+
+        db.add(
+            models.PurchaseItem(
+                purchase_id=purchase.id,
+                item_id=item.id,
+                item_name=item.item_name,
+                **line,
+            )
+        )
+
+        item.stock = new_stock
+        item.purchase_price = line["purchase_price"]
+
+        if line["mrp"] > 0:
+            item.mrp = line["mrp"]
+        if line["sale_price"] > 0:
+            item.sale_price = line["sale_price"]
+
+        item.gst_percent = line["gst_percent"]
+
+        if line["batch_number"]:
+            item.batch_number = line["batch_number"]
+        if line["manufacturing_date"]:
+            item.manufacturing_date = line["manufacturing_date"]
+        if line["expiry_date"]:
+            item.expiry_date = line["expiry_date"]
+
+        db.add(
+            models.StockAdjustment(
+                item_id=item.id,
+                previous_stock=previous_stock,
+                adjustment=int(line["quantity"]),
+                new_stock=new_stock,
+                reason=f"Purchase {purchase.invoice_number}",
+            )
+        )
+
+    bill = models.DealerBill(
+        dealer_id=dealer.id,
+        bill_number=purchase.invoice_number,
+        bill_amount=total_amount,
+        bill_date=purchase_date,
+        note=f"Purchase #{purchase.id}",
+    )
+    db.add(bill)
+
+    if paid_amount > 0:
+        db.add(
+            models.DealerPayment(
+                dealer_id=dealer.id,
+                paid_amount=paid_amount,
+                payment_mode=data.payment_mode or "Cash",
+                payment_date=purchase_date,
+                reference=purchase.invoice_number,
+                note=f"Payment recorded with purchase #{purchase.id}",
+            )
+        )
+
+    db.commit()
+    db.refresh(purchase)
+
+    return {
+        "message": "Purchase saved and stock updated successfully",
+        "purchase_id": purchase.id,
+        "invoice_number": purchase.invoice_number,
+        "total_amount": round(total_amount, 2),
+        "paid_amount": round(paid_amount, 2),
+        "outstanding_amount": round(outstanding, 2),
+    }
+
+
+@app.post("/purchase-returns")
+def create_purchase_return(
+    data: schemas.PurchaseReturnCreate,
+    db: Session = Depends(get_db),
+):
+    purchase_item = (
+        db.query(models.PurchaseItem)
+        .filter(models.PurchaseItem.id == data.purchase_item_id)
+        .first()
+    )
+
+    if not purchase_item:
+        raise HTTPException(status_code=404, detail="Purchase item not found")
+
+    purchase = purchase_item.purchase
+    item = db.query(models.Item).filter(models.Item.id == purchase_item.item_id).first()
+
+    if not item:
+        raise HTTPException(status_code=404, detail="Inventory item not found")
+
+    quantity = int(data.quantity or 0)
+    available_to_return = max(
+        int(purchase_item.quantity or 0) - int(purchase_item.returned_quantity or 0),
+        0,
+    )
+
+    if quantity <= 0:
+        raise HTTPException(status_code=400, detail="Return quantity must be greater than zero")
+
+    if quantity > available_to_return:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only {available_to_return} unit(s) are available to return",
+        )
+
+    if quantity > int(item.stock or 0):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Current stock is only {int(item.stock or 0)}. Cannot return {quantity}.",
+        )
+
+    per_unit_total = (
+        to_float(purchase_item.line_total) / int(purchase_item.quantity or 1)
+    )
+    return_amount = per_unit_total * quantity
+
+    previous_stock = int(item.stock or 0)
+    new_stock = previous_stock - quantity
+
+    item.stock = new_stock
+    purchase_item.returned_quantity = int(purchase_item.returned_quantity or 0) + quantity
+
+    selected_return_date = (
+        datetime.combine(data.return_date, datetime.min.time())
+        if data.return_date
+        else datetime.now()
+    )
+
+    row = models.PurchaseReturn(
+        purchase_id=purchase.id,
+        purchase_item_id=purchase_item.id,
+        dealer_id=purchase.dealer_id,
+        item_id=item.id,
+        quantity=quantity,
+        return_amount=return_amount,
+        reason=data.reason,
+        return_date=selected_return_date,
+    )
+    db.add(row)
+
+    db.add(
+        models.StockAdjustment(
+            item_id=item.id,
+            previous_stock=previous_stock,
+            adjustment=-quantity,
+            new_stock=new_stock,
+            reason=f"Purchase return {purchase.invoice_number}",
+        )
+    )
+
+    purchase.outstanding_amount = max(
+        to_float(purchase.outstanding_amount) - return_amount,
+        0,
+    )
+
+    # Reduce the supplier bill by the returned value so dealer ledger remains aligned.
+    bill = (
+        db.query(models.DealerBill)
+        .filter(
+            models.DealerBill.dealer_id == purchase.dealer_id,
+            models.DealerBill.bill_number == purchase.invoice_number,
+        )
+        .order_by(models.DealerBill.id.desc())
+        .first()
+    )
+    if bill:
+        bill.bill_amount = max(to_float(bill.bill_amount) - return_amount, 0)
+
+    db.commit()
+    db.refresh(row)
+
+    return {
+        "message": "Purchase return saved and stock reduced successfully",
+        "return_id": row.id,
+        "return_amount": round(return_amount, 2),
+        "new_stock": new_stock,
+    }
+
+
+@app.get("/purchase-returns")
+def get_purchase_returns(db: Session = Depends(get_db)):
+    rows = (
+        db.query(models.PurchaseReturn)
+        .order_by(models.PurchaseReturn.return_date.desc())
+        .all()
+    )
+
+    return [
+        {
+            "id": row.id,
+            "purchase_id": row.purchase_id,
+            "purchase_item_id": row.purchase_item_id,
+            "dealer_id": row.dealer_id,
+            "dealer_name": row.purchase.dealer.dealer_name if row.purchase and row.purchase.dealer else "-",
+            "invoice_number": row.purchase.invoice_number if row.purchase else "-",
+            "item_id": row.item_id,
+            "item_name": (
+                row.purchase_item.item_name
+                if row.purchase_item
+                else "-"
+            ),
+            "quantity": row.quantity,
+            "return_amount": round(to_float(row.return_amount), 2),
+            "reason": row.reason,
+            "return_date": row.return_date.strftime("%Y-%m-%d") if row.return_date else None,
+        }
+        for row in rows
+    ]
+
+
+@app.get("/reports/profit-summary")
+def profit_summary(db: Session = Depends(get_db)):
+    sale_items = db.query(models.SaleItem).all()
+
+    sales_value = sum(
+        to_float(row.rate) * int(row.quantity or 0)
+        for row in sale_items
+    )
+    cost_value = sum(
+        to_float(row.cost_price) * int(row.quantity or 0)
+        for row in sale_items
+    )
+    gross_profit = sum(to_float(row.profit_amount) for row in sale_items)
+
+    return {
+        "sales_value": round(sales_value, 2),
+        "cost_value": round(cost_value, 2),
+        "gross_profit": round(gross_profit, 2),
+        "margin_percent": round(
+            gross_profit / sales_value * 100 if sales_value > 0 else 0,
+            2,
+        ),
+    }
 
 
 @app.post("/expenses")

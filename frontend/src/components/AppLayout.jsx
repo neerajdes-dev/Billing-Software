@@ -11,6 +11,7 @@ import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
 import PeopleAltRoundedIcon from "@mui/icons-material/PeopleAltRounded";
 import Inventory2RoundedIcon from "@mui/icons-material/Inventory2Rounded";
 import LocalShippingRoundedIcon from "@mui/icons-material/LocalShippingRounded";
+import ShoppingCartCheckoutRoundedIcon from "@mui/icons-material/ShoppingCartCheckoutRounded";
 import AssessmentRoundedIcon from "@mui/icons-material/AssessmentRounded";
 import PointOfSaleRoundedIcon from "@mui/icons-material/PointOfSaleRounded";
 import PaymentsRoundedIcon from "@mui/icons-material/PaymentsRounded";
@@ -24,7 +25,8 @@ const menu = [
   ["Create Bill", "/create-bill", <ReceiptLongRoundedIcon />],
   ["Credit Customers", "/customers", <PeopleAltRoundedIcon />],
   ["Items & Stock", "/items", <Inventory2RoundedIcon />],
-  ["Dealers", "/dealers", <LocalShippingRoundedIcon />],
+  ["Suppliers", "/dealers", <LocalShippingRoundedIcon />],
+  ["Purchases", "/purchase", <ShoppingCartCheckoutRoundedIcon />],
   ["Stock Report", "/stock-report", <AssessmentRoundedIcon />],
   ["Sales Report", "/sales-report", <PointOfSaleRoundedIcon />],
   ["Expenses", "/expense", <PaymentsRoundedIcon />],

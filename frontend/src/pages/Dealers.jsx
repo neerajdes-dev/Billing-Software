@@ -1,34 +1,815 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Box, Button, Card, CardContent, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Grid, IconButton, MenuItem, Stack, Tab, Tabs, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Grid,
+  IconButton,
+  MenuItem,
+  Paper,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
-import EditRoundedIcon from "@mui/icons-material/EditRounded";
+import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
 import PaymentsRoundedIcon from "@mui/icons-material/PaymentsRounded";
-import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
+import PersonAddAltRoundedIcon from "@mui/icons-material/PersonAddAltRounded";
+import LocalShippingRoundedIcon from "@mui/icons-material/LocalShippingRounded";
 import AppLayout from "../components/AppLayout";
 import PageHeader from "../components/PageHeader";
-import { addDealer, addDealerBill, addDealerPayment, deleteDealer, deleteDealerBill, getDealerLedger, getDealers, updateDealerBill } from "../services/api";
-const money=v=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR"}).format(Number(v||0));
-const today=()=>new Date().toISOString().slice(0,10);
-const emptyDealer={dealer_name:"",mobile:"",email:"",gst_number:"",address:""};
-const emptyBill={bill_number:"",bill_amount:"",bill_date:today(),note:""};
-export default function Dealers(){
- const[tab,setTab]=useState(0),[dealers,setDealers]=useState([]),[selectedId,setSelectedId]=useState(""),[ledger,setLedger]=useState(null),[message,setMessage]=useState({type:"",text:""}),[saving,setSaving]=useState(false);
- const[dealerForm,setDealerForm]=useState(emptyDealer),[billForm,setBillForm]=useState(emptyBill),[editingBill,setEditingBill]=useState(null),[paymentOpen,setPaymentOpen]=useState(false);
- const[payment,setPayment]=useState({paid_amount:"",payment_mode:"Cash",payment_date:today(),reference:"",note:""});
- const loadDealers=async()=>{try{const data=await getDealers();setDealers(data);if(!selectedId&&data.length)setSelectedId(String(data[0].id))}catch(e){setMessage({type:"error",text:e.message})}};
- const loadLedger=async id=>{if(!id){setLedger(null);return}try{setLedger(await getDealerLedger(id))}catch(e){setMessage({type:"error",text:e.message})}};
- useEffect(()=>{loadDealers()},[]);useEffect(()=>{if(selectedId)loadLedger(selectedId)},[selectedId]);
- const totals=useMemo(()=>dealers.reduce((a,d)=>({bill:a.bill+Number(d.bill_amount||0),paid:a.paid+Number(d.paid_amount||0),pending:a.pending+Number(d.pending_amount||0)}),{bill:0,paid:0,pending:0}),[dealers]);
- const saveDealer=async()=>{if(!dealerForm.dealer_name.trim())return setMessage({type:"warning",text:"Dealer name is required."});try{setSaving(true);await addDealer(dealerForm);setDealerForm(emptyDealer);await loadDealers();setMessage({type:"success",text:"Dealer details saved successfully."})}catch(e){setMessage({type:"error",text:e.message})}finally{setSaving(false)}};
- const saveBill=async()=>{if(!selectedId||!billForm.bill_amount)return setMessage({type:"warning",text:"Select a dealer and enter the bill amount."});try{setSaving(true);const payload={...billForm,bill_amount:Number(billForm.bill_amount)};if(editingBill)await updateDealerBill(editingBill.id,payload);else await addDealerBill({dealer_id:Number(selectedId),...payload});setBillForm(emptyBill);setEditingBill(null);await Promise.all([loadDealers(),loadLedger(selectedId)]);setMessage({type:"success",text:editingBill?"Dealer bill updated.":"Dealer bill added."})}catch(e){setMessage({type:"error",text:e.message})}finally{setSaving(false)}};
- const editBill=b=>{setEditingBill(b);setBillForm({bill_number:b.bill_number||"",bill_amount:b.bill_amount,bill_date:(b.bill_date||"").slice(0,10),note:b.note||""})};
- const removeBill=async b=>{if(!b.id||!confirm("Delete this dealer bill?"))return;try{await deleteDealerBill(b.id);await Promise.all([loadDealers(),loadLedger(selectedId)]);setMessage({type:"success",text:"Dealer bill deleted."})}catch(e){setMessage({type:"error",text:e.message})}};
- const recordPayment=async()=>{if(!payment.paid_amount)return;try{setSaving(true);await addDealerPayment({dealer_id:Number(selectedId),...payment,paid_amount:Number(payment.paid_amount)});setPaymentOpen(false);setPayment({paid_amount:"",payment_mode:"Cash",payment_date:today(),reference:"",note:""});await Promise.all([loadDealers(),loadLedger(selectedId)]);setMessage({type:"success",text:"Dealer payment recorded."})}catch(e){setMessage({type:"error",text:e.message})}finally{setSaving(false)}};
- const removeDealer=async id=>{if(!confirm("Delete dealer, bills and payment history?"))return;try{await deleteDealer(id);setSelectedId("");setLedger(null);await loadDealers();setMessage({type:"success",text:"Dealer deleted."})}catch(e){setMessage({type:"error",text:e.message})}};
- return <AppLayout><PageHeader title="Dealers" subtitle="Maintain dealer details separately from bills, outstanding and payment history" />{message.text&&<Alert severity={message.type} sx={{mb:2.5}}>{message.text}</Alert>}
- <Grid container spacing={2.5} mb={3}>{[["Total purchases",totals.bill],["Total paid",totals.paid],["Outstanding",totals.pending]].map(([l,v])=><Grid key={l} size={{xs:12,sm:4}}><Card><CardContent><Typography variant="body2" color="text.secondary">{l}</Typography><Typography variant="h5" mt={.7}>{money(v)}</Typography></CardContent></Card></Grid>)}</Grid>
- <Card><Tabs value={tab} onChange={(_,v)=>setTab(v)} sx={{px:2,borderBottom:1,borderColor:"divider"}}><Tab label="Dealer Details"/><Tab label="Dealer Account & Ledger"/></Tabs>
- {tab===0&&<CardContent sx={{p:3}}><Grid container spacing={3}><Grid size={{xs:12,lg:4}}><Typography variant="h6">Add dealer</Typography><Typography variant="body2" color="text.secondary" mb={2.5}>Save only master details here.</Typography><Stack spacing={2}><TextField label="Dealer Name" value={dealerForm.dealer_name} onChange={e=>setDealerForm({...dealerForm,dealer_name:e.target.value})}/><TextField label="Mobile" value={dealerForm.mobile} onChange={e=>setDealerForm({...dealerForm,mobile:e.target.value})}/><TextField label="Email" value={dealerForm.email} onChange={e=>setDealerForm({...dealerForm,email:e.target.value})}/><TextField label="GST Number" value={dealerForm.gst_number} onChange={e=>setDealerForm({...dealerForm,gst_number:e.target.value})}/><TextField label="Address" multiline rows={3} value={dealerForm.address} onChange={e=>setDealerForm({...dealerForm,address:e.target.value})}/><Button variant="contained" onClick={saveDealer} disabled={saving}>Save Dealer</Button></Stack></Grid><Grid size={{xs:12,lg:8}}><Typography variant="h6" mb={2}>Dealer master list</Typography><TableContainer><Table><TableHead><TableRow><TableCell>Dealer</TableCell><TableCell>Contact</TableCell><TableCell>GST</TableCell><TableCell align="right">Outstanding</TableCell><TableCell align="center">Action</TableCell></TableRow></TableHead><TableBody>{dealers.map(d=><TableRow key={d.id}><TableCell><Typography fontWeight={700}>{d.dealer_name}</Typography><Typography variant="caption" color="text.secondary">{d.address||"—"}</Typography></TableCell><TableCell>{d.mobile||"—"}<br/><Typography variant="caption">{d.email||""}</Typography></TableCell><TableCell>{d.gst_number||"—"}</TableCell><TableCell align="right"><Typography fontWeight={800} color={Number(d.pending_amount)>0?"error.main":"success.main"}>{money(d.pending_amount)}</Typography></TableCell><TableCell align="center"><IconButton color="error" onClick={()=>removeDealer(d.id)}><DeleteOutlineRoundedIcon/></IconButton></TableCell></TableRow>)}</TableBody></Table></TableContainer></Grid></Grid></CardContent>}
- {tab===1&&<CardContent sx={{p:3}}><TextField select fullWidth label="Select Dealer" value={selectedId} onChange={e=>setSelectedId(e.target.value)} sx={{maxWidth:480,mb:3}}>{dealers.map(d=><MenuItem key={d.id} value={String(d.id)}>{d.dealer_name}</MenuItem>)}</TextField>{ledger&&<><Grid container spacing={2.5} mb={3}>{[["Total Bills",ledger.summary.total_bills],["Total Paid",ledger.summary.total_paid],["Outstanding",ledger.summary.outstanding]].map(([l,v])=><Grid key={l} size={{xs:12,sm:4}}><Card variant="outlined"><CardContent><Typography variant="body2" color="text.secondary">{l}</Typography><Typography variant="h5" mt={.5}>{money(v)}</Typography></CardContent></Card></Grid>)}</Grid><Grid container spacing={3}><Grid size={{xs:12,lg:4}}><Card variant="outlined"><CardContent><Typography variant="h6">{editingBill?"Update dealer bill":"Add dealer bill"}</Typography><Stack spacing={2} mt={2}><TextField label="Bill Number" value={billForm.bill_number} onChange={e=>setBillForm({...billForm,bill_number:e.target.value})}/><TextField type="number" label="Bill Amount" value={billForm.bill_amount} onChange={e=>setBillForm({...billForm,bill_amount:e.target.value})}/><TextField type="date" label="Bill Date" InputLabelProps={{shrink:true}} value={billForm.bill_date} onChange={e=>setBillForm({...billForm,bill_date:e.target.value})}/><TextField label="Note" multiline rows={2} value={billForm.note} onChange={e=>setBillForm({...billForm,note:e.target.value})}/><Button variant="contained" onClick={saveBill}>{editingBill?"Update Bill":"Add Bill"}</Button>{editingBill&&<Button onClick={()=>{setEditingBill(null);setBillForm(emptyBill)}}>Cancel Edit</Button>}<Button color="success" variant="outlined" startIcon={<PaymentsRoundedIcon/>} disabled={Number(ledger.summary.outstanding)<=0} onClick={()=>setPaymentOpen(true)}>Record Payment</Button></Stack></CardContent></Card></Grid><Grid size={{xs:12,lg:8}}><Typography variant="h6" mb={1}>Bill history</Typography><TableContainer><Table size="small"><TableHead><TableRow><TableCell>Date</TableCell><TableCell>Bill No.</TableCell><TableCell>Note</TableCell><TableCell align="right">Amount</TableCell><TableCell align="center">Actions</TableCell></TableRow></TableHead><TableBody>{ledger.bills.map((b,i)=><TableRow key={b.id||i}><TableCell>{b.bill_date?new Date(b.bill_date).toLocaleDateString("en-GB"):"—"}</TableCell><TableCell>{b.bill_number||"—"}</TableCell><TableCell>{b.note||"—"}</TableCell><TableCell align="right">{money(b.bill_amount)}</TableCell><TableCell align="center">{b.id&&<><Tooltip title="Edit"><IconButton onClick={()=>editBill(b)}><EditRoundedIcon/></IconButton></Tooltip><Tooltip title="Delete"><IconButton color="error" onClick={()=>removeBill(b)}><DeleteOutlineRoundedIcon/></IconButton></Tooltip></>}</TableCell></TableRow>)}{!ledger.bills.length&&<TableRow><TableCell colSpan={5} align="center" sx={{py:4}}>No bills found</TableCell></TableRow>}</TableBody></Table></TableContainer><Typography variant="h6" mt={4} mb={1}>Payment history</Typography><TableContainer><Table size="small"><TableHead><TableRow><TableCell>Date</TableCell><TableCell>Mode</TableCell><TableCell>Reference</TableCell><TableCell>Note</TableCell><TableCell align="right">Amount</TableCell></TableRow></TableHead><TableBody>{ledger.payments.map(p=><TableRow key={p.id}><TableCell>{p.payment_date?new Date(p.payment_date).toLocaleDateString("en-GB"):"—"}</TableCell><TableCell><Chip size="small" label={p.payment_mode}/></TableCell><TableCell>{p.reference||"—"}</TableCell><TableCell>{p.note||"—"}</TableCell><TableCell align="right">{money(p.paid_amount)}</TableCell></TableRow>)}{!ledger.payments.length&&<TableRow><TableCell colSpan={5} align="center" sx={{py:4}}>No payment history</TableCell></TableRow>}</TableBody></Table></TableContainer></Grid></Grid></>}</CardContent>}</Card>
- <Dialog open={paymentOpen} onClose={()=>setPaymentOpen(false)} fullWidth maxWidth="sm"><DialogTitle>Record dealer payment</DialogTitle><DialogContent><Typography variant="body2" color="text.secondary" mb={2}>Outstanding {money(ledger?.summary.outstanding)}</Typography><Stack spacing={2}><TextField type="number" label="Payment Amount" value={payment.paid_amount} onChange={e=>setPayment({...payment,paid_amount:e.target.value})}/><TextField type="date" label="Payment Date" InputLabelProps={{shrink:true}} value={payment.payment_date} onChange={e=>setPayment({...payment,payment_date:e.target.value})}/><TextField select label="Payment Mode" value={payment.payment_mode} onChange={e=>setPayment({...payment,payment_mode:e.target.value})}>{["Cash","Online","UPI","Bank Transfer","Cheque","Credit Adjustment"].map(x=><MenuItem key={x} value={x}>{x}</MenuItem>)}</TextField><TextField label="Reference Number" value={payment.reference} onChange={e=>setPayment({...payment,reference:e.target.value})}/><TextField label="Note" multiline rows={2} value={payment.note} onChange={e=>setPayment({...payment,note:e.target.value})}/></Stack></DialogContent><DialogActions><Button onClick={()=>setPaymentOpen(false)}>Cancel</Button><Button variant="contained" onClick={recordPayment} disabled={saving}>Save Payment</Button></DialogActions></Dialog>
- </AppLayout>}
+import {
+  addDealer,
+  addDealerPayment,
+  deleteDealer,
+  getDealerLedger,
+  getDealers,
+} from "../services/api";
+
+const money = (value) =>
+  new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+  }).format(Number(value || 0));
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+const emptySupplier = {
+  dealer_name: "",
+  mobile: "",
+  email: "",
+  gst_number: "",
+  address: "",
+};
+
+export default function Dealers() {
+  const [dealers, setDealers] = useState([]);
+  const [message, setMessage] = useState({
+    type: "",
+    text: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState(emptySupplier);
+
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [ledgerOpen, setLedgerOpen] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [ledger, setLedger] = useState(null);
+
+  const [payment, setPayment] = useState({
+    paid_amount: "",
+    payment_mode: "Cash",
+    payment_date: today(),
+    reference: "",
+    note: "",
+  });
+
+  const load = async () => {
+    try {
+      setDealers(await getDealers());
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: error.message,
+      });
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const totals = useMemo(
+    () =>
+      dealers.reduce(
+        (acc, dealer) => ({
+          purchase:
+            acc.purchase +
+            Number(dealer.bill_amount || 0),
+          paid:
+            acc.paid +
+            Number(dealer.paid_amount || 0),
+          pending:
+            acc.pending +
+            Number(dealer.pending_amount || 0),
+        }),
+        {
+          purchase: 0,
+          paid: 0,
+          pending: 0,
+        }
+      ),
+    [dealers]
+  );
+
+  const saveSupplier = async () => {
+    if (!form.dealer_name.trim()) {
+      setMessage({
+        type: "warning",
+        text: "Supplier name is required.",
+      });
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      await addDealer({
+        dealer_name: form.dealer_name.trim(),
+        mobile: form.mobile.trim(),
+        email: form.email.trim() || null,
+        gst_number: form.gst_number.trim() || null,
+        address: form.address.trim() || null,
+      });
+
+      setForm(emptySupplier);
+      await load();
+
+      setMessage({
+        type: "success",
+        text: "Supplier saved successfully.",
+      });
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: error.message,
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openPayment = (dealer) => {
+    setSelected(dealer);
+    setPayment({
+      paid_amount: "",
+      payment_mode: "Cash",
+      payment_date: today(),
+      reference: "",
+      note: "",
+    });
+    setPaymentOpen(true);
+  };
+
+  const recordPayment = async () => {
+    const amount = Number(payment.paid_amount || 0);
+
+    if (amount <= 0) {
+      setMessage({
+        type: "warning",
+        text: "Enter a valid supplier payment amount.",
+      });
+      return;
+    }
+
+    if (amount > Number(selected?.pending_amount || 0)) {
+      setMessage({
+        type: "warning",
+        text: "Payment cannot exceed supplier outstanding amount.",
+      });
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      await addDealerPayment({
+        dealer_id: selected.id,
+        ...payment,
+        paid_amount: amount,
+      });
+
+      setPaymentOpen(false);
+      await load();
+
+      setMessage({
+        type: "success",
+        text: "Supplier payment recorded successfully.",
+      });
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: error.message,
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const showLedger = async (dealer) => {
+    try {
+      setSelected(dealer);
+      setLedgerOpen(true);
+      setLedger(null);
+      setLedger(await getDealerLedger(dealer.id));
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: error.message,
+      });
+    }
+  };
+
+  const remove = async (dealer) => {
+    if (
+      !window.confirm(
+        `Delete ${dealer.dealer_name}? This also deletes its supplier ledger and linked purchase records.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      await deleteDealer(dealer.id);
+      await load();
+      setMessage({
+        type: "success",
+        text: "Supplier deleted.",
+      });
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: error.message,
+      });
+    }
+  };
+
+  return (
+    <AppLayout>
+      <PageHeader
+        title="Suppliers & Ledger"
+        subtitle="Manage supplier masters, purchase balances and dated payments"
+      />
+
+      {message.text && (
+        <Alert
+          severity={message.type}
+          sx={{ mb: 2.5 }}
+          onClose={() =>
+            setMessage({ type: "", text: "" })
+          }
+        >
+          {message.text}
+        </Alert>
+      )}
+
+      <Grid container spacing={2.5} sx={{ mb: 3 }}>
+        {[
+          ["Suppliers", dealers.length],
+          ["Total purchases", money(totals.purchase)],
+          ["Total paid", money(totals.paid)],
+          ["Outstanding", money(totals.pending)],
+        ].map(([label, value]) => (
+          <Grid
+            key={label}
+            size={{ xs: 12, sm: 6, lg: 3 }}
+          >
+            <Card>
+              <CardContent>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                >
+                  {label}
+                </Typography>
+                <Typography
+                  variant="h5"
+                  fontWeight={900}
+                  sx={{ mt: 0.7 }}
+                >
+                  {value}
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
+        ))}
+      </Grid>
+
+      <Grid container spacing={3}>
+        <Grid size={{ xs: 12, lg: 4 }}>
+          <Card>
+            <CardContent sx={{ p: 3 }}>
+              <Stack
+                direction="row"
+                spacing={1.2}
+                alignItems="center"
+                sx={{ mb: 2.5 }}
+              >
+                <PersonAddAltRoundedIcon color="primary" />
+                <Box>
+                  <Typography variant="h6">
+                    Add Supplier
+                  </Typography>
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                  >
+                    Create supplier details before entering a purchase.
+                  </Typography>
+                </Box>
+              </Stack>
+
+              <Stack spacing={2}>
+                <TextField
+                  label="Supplier Name *"
+                  value={form.dealer_name}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      dealer_name: e.target.value,
+                    })
+                  }
+                />
+                <TextField
+                  label="Mobile"
+                  value={form.mobile}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      mobile: e.target.value,
+                    })
+                  }
+                />
+                <TextField
+                  label="Email"
+                  value={form.email}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      email: e.target.value,
+                    })
+                  }
+                />
+                <TextField
+                  label="GST Number"
+                  value={form.gst_number}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      gst_number: e.target.value,
+                    })
+                  }
+                />
+                <TextField
+                  label="Address"
+                  multiline
+                  rows={3}
+                  value={form.address}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      address: e.target.value,
+                    })
+                  }
+                />
+
+                <Button
+                  variant="contained"
+                  startIcon={<LocalShippingRoundedIcon />}
+                  onClick={saveSupplier}
+                  disabled={saving}
+                >
+                  {saving
+                    ? "Saving..."
+                    : "Save Supplier"}
+                </Button>
+              </Stack>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        <Grid size={{ xs: 12, lg: 8 }}>
+          <Card>
+            <CardContent sx={{ p: 0 }}>
+              <Box sx={{ p: 3 }}>
+                <Typography variant="h6">
+                  Supplier Summary
+                </Typography>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ mt: 0.5 }}
+                >
+                  Purchase bills are created automatically from Purchase Management.
+                </Typography>
+              </Box>
+
+              <TableContainer>
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Supplier</TableCell>
+                      <TableCell>GSTIN</TableCell>
+                      <TableCell align="right">
+                        Purchases
+                      </TableCell>
+                      <TableCell align="right">
+                        Paid
+                      </TableCell>
+                      <TableCell align="right">
+                        Outstanding
+                      </TableCell>
+                      <TableCell align="center">
+                        Actions
+                      </TableCell>
+                    </TableRow>
+                  </TableHead>
+
+                  <TableBody>
+                    {dealers.map((dealer) => (
+                      <TableRow key={dealer.id} hover>
+                        <TableCell>
+                          <Typography fontWeight={800}>
+                            {dealer.dealer_name}
+                          </Typography>
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                          >
+                            {dealer.mobile || "—"}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          {dealer.gst_number || "—"}
+                        </TableCell>
+                        <TableCell align="right">
+                          {money(dealer.bill_amount)}
+                        </TableCell>
+                        <TableCell align="right">
+                          {money(dealer.paid_amount)}
+                        </TableCell>
+                        <TableCell align="right">
+                          <Typography
+                            fontWeight={900}
+                            color={
+                              Number(dealer.pending_amount) > 0
+                                ? "error.main"
+                                : "success.main"
+                            }
+                          >
+                            {money(dealer.pending_amount)}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="center">
+                          <Tooltip title="Record Payment">
+                            <span>
+                              <IconButton
+                                color="success"
+                                disabled={
+                                  Number(
+                                    dealer.pending_amount
+                                  ) <= 0
+                                }
+                                onClick={() =>
+                                  openPayment(dealer)
+                                }
+                              >
+                                <PaymentsRoundedIcon />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+
+                          <Tooltip title="Supplier Ledger">
+                            <IconButton
+                              color="primary"
+                              onClick={() =>
+                                showLedger(dealer)
+                              }
+                            >
+                              <HistoryRoundedIcon />
+                            </IconButton>
+                          </Tooltip>
+
+                          <Tooltip title="Delete Supplier">
+                            <IconButton
+                              color="error"
+                              onClick={() =>
+                                remove(dealer)
+                              }
+                            >
+                              <DeleteOutlineRoundedIcon />
+                            </IconButton>
+                          </Tooltip>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+
+                    {!dealers.length && (
+                      <TableRow>
+                        <TableCell
+                          colSpan={6}
+                          align="center"
+                          sx={{ py: 7 }}
+                        >
+                          No suppliers found.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
+
+      <Dialog
+        open={paymentOpen}
+        onClose={() => setPaymentOpen(false)}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>
+          Record Supplier Payment
+        </DialogTitle>
+
+        <DialogContent dividers>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ mb: 2.5 }}
+          >
+            {selected?.dealer_name} · Outstanding{" "}
+            {money(selected?.pending_amount)}
+          </Typography>
+
+          <Stack spacing={2}>
+            <TextField
+              type="number"
+              label="Payment Amount"
+              value={payment.paid_amount}
+              onChange={(e) =>
+                setPayment({
+                  ...payment,
+                  paid_amount: e.target.value,
+                })
+              }
+            />
+            <TextField
+              type="date"
+              label="Payment Date"
+              InputLabelProps={{ shrink: true }}
+              value={payment.payment_date}
+              onChange={(e) =>
+                setPayment({
+                  ...payment,
+                  payment_date: e.target.value,
+                })
+              }
+            />
+            <TextField
+              select
+              label="Payment Mode"
+              value={payment.payment_mode}
+              onChange={(e) =>
+                setPayment({
+                  ...payment,
+                  payment_mode: e.target.value,
+                })
+              }
+            >
+              {[
+                "Cash",
+                "Online",
+                "Bank Transfer",
+                "Cheque",
+              ].map((mode) => (
+                <MenuItem key={mode} value={mode}>
+                  {mode}
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              label="Reference Number"
+              value={payment.reference}
+              onChange={(e) =>
+                setPayment({
+                  ...payment,
+                  reference: e.target.value,
+                })
+              }
+            />
+            <TextField
+              label="Note"
+              multiline
+              rows={2}
+              value={payment.note}
+              onChange={(e) =>
+                setPayment({
+                  ...payment,
+                  note: e.target.value,
+                })
+              }
+            />
+          </Stack>
+        </DialogContent>
+
+        <DialogActions>
+          <Button
+            onClick={() => setPaymentOpen(false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={recordPayment}
+            disabled={saving}
+          >
+            Save Payment
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={ledgerOpen}
+        onClose={() => setLedgerOpen(false)}
+        fullWidth
+        maxWidth="lg"
+      >
+        <DialogTitle>
+          Supplier Ledger — {selected?.dealer_name}
+        </DialogTitle>
+
+        <DialogContent dividers>
+          {!ledger ? (
+            <Typography color="text.secondary">
+              Loading ledger...
+            </Typography>
+          ) : (
+            <Stack spacing={2.5}>
+              <Grid container spacing={2}>
+                {[
+                  [
+                    "Total Purchases",
+                    money(ledger.summary?.total_bills),
+                  ],
+                  [
+                    "Total Paid",
+                    money(ledger.summary?.total_paid),
+                  ],
+                  [
+                    "Outstanding",
+                    money(ledger.summary?.outstanding),
+                  ],
+                ].map(([label, value]) => (
+                  <Grid
+                    key={label}
+                    size={{ xs: 12, sm: 4 }}
+                  >
+                    <Paper
+                      variant="outlined"
+                      sx={{
+                        p: 2,
+                        borderRadius: 3,
+                      }}
+                    >
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                      >
+                        {label}
+                      </Typography>
+                      <Typography
+                        variant="h6"
+                        fontWeight={900}
+                        sx={{ mt: 0.5 }}
+                      >
+                        {value}
+                      </Typography>
+                    </Paper>
+                  </Grid>
+                ))}
+              </Grid>
+
+              <Grid container spacing={2.5}>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <Typography
+                    fontWeight={850}
+                    sx={{ mb: 1 }}
+                  >
+                    Purchase Bills
+                  </Typography>
+                  <TableContainer
+                    component={Paper}
+                    variant="outlined"
+                    sx={{ borderRadius: 3 }}
+                  >
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Date</TableCell>
+                          <TableCell>Invoice</TableCell>
+                          <TableCell align="right">
+                            Amount
+                          </TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {(ledger.bills || []).map(
+                          (row, index) => (
+                            <TableRow
+                              key={
+                                row.id ||
+                                `${row.bill_number}-${index}`
+                              }
+                            >
+                              <TableCell>
+                                {row.bill_date
+                                  ? String(
+                                      row.bill_date
+                                    ).slice(0, 10)
+                                  : "—"}
+                              </TableCell>
+                              <TableCell>
+                                {row.bill_number || "—"}
+                              </TableCell>
+                              <TableCell align="right">
+                                {money(row.bill_amount)}
+                              </TableCell>
+                            </TableRow>
+                          )
+                        )}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <Typography
+                    fontWeight={850}
+                    sx={{ mb: 1 }}
+                  >
+                    Payments
+                  </Typography>
+                  <TableContainer
+                    component={Paper}
+                    variant="outlined"
+                    sx={{ borderRadius: 3 }}
+                  >
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Date</TableCell>
+                          <TableCell>Mode</TableCell>
+                          <TableCell align="right">
+                            Amount
+                          </TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {(ledger.payments || []).map(
+                          (row) => (
+                            <TableRow key={row.id}>
+                              <TableCell>
+                                {row.payment_date
+                                  ? String(
+                                      row.payment_date
+                                    ).slice(0, 10)
+                                  : "—"}
+                              </TableCell>
+                              <TableCell>
+                                <Chip
+                                  size="small"
+                                  label={row.payment_mode}
+                                />
+                              </TableCell>
+                              <TableCell align="right">
+                                {money(row.paid_amount)}
+                              </TableCell>
+                            </TableRow>
+                          )
+                        )}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </Grid>
+              </Grid>
+            </Stack>
+          )}
+        </DialogContent>
+
+        <DialogActions>
+          <Button
+            onClick={() => setLedgerOpen(false)}
+          >
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </AppLayout>
+  );
+}

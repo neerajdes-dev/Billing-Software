@@ -9,6 +9,7 @@ import CreateBill from "./pages/CreateBill";
 import Customers from "./pages/Customers";
 import Items from "./pages/Items";
 import Dealers from "./pages/Dealers";
+import Purchase from "./pages/Purchase";
 import StockReport from "./pages/StockReport";
 import SalesReport from "./pages/SalesReport";
 import Expense from "./pages/Expense";
@@ -24,6 +25,7 @@ export default function App() {
     <Route path="/customers" element={<Secure><Customers /></Secure>} />
     <Route path="/items" element={<Secure><Items /></Secure>} />
     <Route path="/dealers" element={<Secure><Dealers /></Secure>} />
+    <Route path="/purchase" element={<Secure><Purchase /></Secure>} />
     <Route path="/stock-report" element={<Secure><StockReport /></Secure>} />
     <Route path="/sales-report" element={<Secure><SalesReport /></Secure>} />
     <Route path="/expense" element={<Secure><Expense /></Secure>} />
