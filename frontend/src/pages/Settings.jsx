@@ -571,7 +571,7 @@ export default function Settings() {
             <CardContent sx={{ p: 3 }}>
               <Typography variant="h6">Invoice layout</Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 3 }}>
-                Configure paper, theme, alignment and visible invoice sections.
+                Configure paper, theme, alignment and visible invoice sections. Theme changes appear instantly in Live Invoice Preview.
               </Typography>
 
               <Grid container spacing={2.25}>
@@ -611,11 +611,21 @@ export default function Settings() {
                     value={printSettings.invoice_theme}
                     onChange={(e) => updatePrintSetting("invoice_theme", e.target.value)}
                   >
-                    <MenuItem value="classic">Classic</MenuItem>
-                    <MenuItem value="professional">Professional</MenuItem>
-                    <MenuItem value="modern">Modern</MenuItem>
-                    <MenuItem value="minimal">Minimal</MenuItem>
-                    <MenuItem value="retail">Retail</MenuItem>
+                    <MenuItem value="professional">
+                      Professional Blue
+                    </MenuItem>
+                    <MenuItem value="modern">
+                      Modern Green
+                    </MenuItem>
+                    <MenuItem value="minimal">
+                      Premium Black
+                    </MenuItem>
+                    <MenuItem value="retail">
+                      Elegant Purple
+                    </MenuItem>
+                    <MenuItem value="classic">
+                      Classic Orange
+                    </MenuItem>
                   </TextField>
                 </Grid>
 

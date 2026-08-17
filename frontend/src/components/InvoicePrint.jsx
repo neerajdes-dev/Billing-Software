@@ -168,6 +168,108 @@ const getUpiSettings = () => {
   }
 };
 
+
+const INVOICE_THEMES = {
+  classic: {
+    name: "Classic Orange",
+    primary: "#B45309",
+    accent: "#F59E0B",
+    headerBg: "#FFF7ED",
+    headerColor: "#7C2D12",
+    tableHeaderBg: "#FFEDD5",
+    tableHeaderColor: "#7C2D12",
+    border: "#C2410C",
+    totalBg: "#FFF7ED",
+    totalColor: "#7C2D12",
+    footerBg: "#FFF7ED",
+    radius: 0,
+    borderWidth: 1,
+    thermalStyle: "double",
+  },
+  professional: {
+    name: "Professional Blue",
+    primary: "#1D4ED8",
+    accent: "#2563EB",
+    headerBg: "#EFF6FF",
+    headerColor: "#1E3A8A",
+    tableHeaderBg: "#DBEAFE",
+    tableHeaderColor: "#1E3A8A",
+    border: "#2563EB",
+    totalBg: "#EFF6FF",
+    totalColor: "#1E3A8A",
+    footerBg: "#EFF6FF",
+    radius: 8,
+    borderWidth: 1,
+    thermalStyle: "solid",
+  },
+  modern: {
+    name: "Modern Green",
+    primary: "#047857",
+    accent: "#059669",
+    headerBg: "#ECFDF5",
+    headerColor: "#065F46",
+    tableHeaderBg: "#D1FAE5",
+    tableHeaderColor: "#065F46",
+    border: "#059669",
+    totalBg: "#ECFDF5",
+    totalColor: "#065F46",
+    footerBg: "#ECFDF5",
+    radius: 12,
+    borderWidth: 1,
+    thermalStyle: "solid",
+  },
+  minimal: {
+    name: "Premium Black",
+    primary: "#111827",
+    accent: "#374151",
+    headerBg: "#FFFFFF",
+    headerColor: "#111827",
+    tableHeaderBg: "#111827",
+    tableHeaderColor: "#FFFFFF",
+    border: "#111827",
+    totalBg: "#111827",
+    totalColor: "#FFFFFF",
+    footerBg: "#F3F4F6",
+    radius: 0,
+    borderWidth: 1,
+    thermalStyle: "minimal",
+  },
+  retail: {
+    name: "Elegant Purple",
+    primary: "#6D28D9",
+    accent: "#7C3AED",
+    headerBg: "#F5F3FF",
+    headerColor: "#4C1D95",
+    tableHeaderBg: "#EDE9FE",
+    tableHeaderColor: "#4C1D95",
+    border: "#7C3AED",
+    totalBg: "#F5F3FF",
+    totalColor: "#4C1D95",
+    footerBg: "#F5F3FF",
+    radius: 10,
+    borderWidth: 2,
+    thermalStyle: "bold",
+  },
+};
+
+const getInvoiceTheme = (name) =>
+  INVOICE_THEMES[name] || INVOICE_THEMES.professional;
+
+const getTextScale = (size) =>
+  ({
+    small: 0.9,
+    medium: 1,
+    large: 1.12,
+  }[size] || 1);
+
+const getHeaderAlignment = (value) =>
+  ["left", "center", "right"].includes(value)
+    ? value
+    : "left";
+
+const getLogoOrder = (position) =>
+  position === "right" ? 2 : position === "center" ? 0 : 0;
+
 function ThermalInvoice({
   business,
   invoice,
@@ -180,6 +282,15 @@ function ThermalInvoice({
 }) {
   const thermalSize = printSettings.thermal_size || "80mm";
   const is58 = thermalSize === "58mm";
+  const invoiceTheme = getInvoiceTheme(
+    printSettings.invoice_theme
+  );
+  const textScale = getTextScale(
+    printSettings.invoice_text_size
+  );
+  const headerAlignment = getHeaderAlignment(
+    printSettings.header_alignment
+  );
   const showLogo = printSettings.show_logo !== false;
   const showBarcode = printSettings.show_barcode !== false;
   const showBatchExpiry = printSettings.show_batch_expiry !== false;
@@ -225,9 +336,9 @@ function ThermalInvoice({
     ? Math.min(Number(upiSettings.qr_size || 110), 105)
     : Math.min(Number(upiSettings.qr_size || 130), 125);
 
-  const font = is58 ? 9.2 : 10.2;
-  const small = is58 ? 8 : 8.8;
-  const section = is58 ? 9.5 : 10.5;
+  const font = (is58 ? 9.2 : 10.2) * textScale;
+  const small = (is58 ? 8 : 8.8) * textScale;
+  const section = (is58 ? 9.5 : 10.5) * textScale;
 
   return (
     <Box
@@ -241,17 +352,40 @@ function ThermalInvoice({
         fontFamily: '"Arial", "Segoe UI", sans-serif',
         fontSize: font,
         lineHeight: 1.22,
+        border:
+          preview && invoiceTheme.thermalStyle === "bold"
+            ? "2px solid #000"
+            : preview &&
+              invoiceTheme.thermalStyle === "double"
+            ? "3px double #000"
+            : "none",
       }}
     >
-      <Stack alignItems="center" spacing={0.35}>
+      <Stack
+        alignItems={
+          headerAlignment === "left"
+            ? "flex-start"
+            : headerAlignment === "right"
+            ? "flex-end"
+            : "center"
+        }
+        textAlign={headerAlignment}
+        spacing={0.35}
+      >
         {showLogo && (
           <Box
             component="img"
             src={businessLogo}
             alt="Business Logo"
             sx={{
-              width: is58 ? 42 : 54,
-              height: is58 ? 32 : 42,
+              width: Math.min(
+                Number(printSettings.logo_width || (is58 ? 42 : 54)),
+                is58 ? 74 : 100
+              ),
+              height: Math.min(
+                Number(printSettings.logo_height || (is58 ? 32 : 42)),
+                is58 ? 55 : 75
+              ),
               objectFit: "contain",
               mb: 0.25,
             }}
@@ -262,7 +396,7 @@ function ThermalInvoice({
           sx={{
             fontSize: is58 ? 12 : 14,
             fontWeight: 900,
-            textAlign: "center",
+            textAlign: headerAlignment,
             lineHeight: 1.12,
           }}
         >
@@ -273,7 +407,7 @@ function ThermalInvoice({
           <Typography
             sx={{
               fontSize: small,
-              textAlign: "center",
+              textAlign: headerAlignment,
               lineHeight: 1.15,
             }}
           >
@@ -284,7 +418,7 @@ function ThermalInvoice({
         <Typography
           sx={{
             fontSize: small,
-            textAlign: "center",
+            textAlign: headerAlignment,
           }}
         >
           {business.gst_number
@@ -296,7 +430,7 @@ function ThermalInvoice({
           <Typography
             sx={{
               fontSize: small,
-              textAlign: "center",
+              textAlign: headerAlignment,
             }}
           >
             {[business.mobile, business.email]
@@ -308,8 +442,24 @@ function ThermalInvoice({
 
       <Box
         sx={{
-          borderTop: "1px solid #000",
-          borderBottom: "1px solid #000",
+          borderTop:
+            invoiceTheme.thermalStyle === "minimal"
+              ? "2px solid #000"
+              : `${invoiceTheme.borderWidth}px solid #000`,
+          borderBottom:
+            invoiceTheme.thermalStyle === "minimal"
+              ? "2px solid #000"
+              : `${invoiceTheme.borderWidth}px solid #000`,
+          bgcolor:
+            invoiceTheme.thermalStyle === "minimal" ||
+            invoiceTheme.thermalStyle === "bold"
+              ? "#000"
+              : "#fff",
+          color:
+            invoiceTheme.thermalStyle === "minimal" ||
+            invoiceTheme.thermalStyle === "bold"
+              ? "#fff"
+              : "#000",
           py: 0.55,
           my: 0.8,
           textAlign: "center",
@@ -933,6 +1083,18 @@ function A4Invoice({
   upiSettings,
   preview = false,
 }) {
+  const invoiceTheme = getInvoiceTheme(
+    printSettings.invoice_theme
+  );
+  const textScale = getTextScale(
+    printSettings.invoice_text_size
+  );
+  const headerAlignment = getHeaderAlignment(
+    printSettings.header_alignment
+  );
+  const logoPosition =
+    printSettings.logo_position || "left";
+
   const showLogo = printSettings.show_logo !== false;
   const showBarcode = printSettings.show_barcode !== false;
   const showBatchExpiry = printSettings.show_batch_expiry !== false;
@@ -977,19 +1139,61 @@ function A4Invoice({
       className={`${preview ? "invoice-preview-area" : "invoice-print-area"} invoice-a4`}
       sx={{
         bgcolor: "#fff",
-        color: "#000",
+        color: "#111827",
         width: "100%",
         p: 3,
         fontFamily: '"Inter", Arial, sans-serif',
+        fontSize: `${textScale}rem`,
+        border: `${invoiceTheme.borderWidth}px solid ${invoiceTheme.border}`,
+        borderRadius: preview ? `${invoiceTheme.radius}px` : 0,
+        overflow: "hidden",
       }}
     >
       <Stack
-        direction="row"
-        justifyContent="space-between"
-        alignItems="flex-start"
+        direction={{
+          xs: "column",
+          sm: logoPosition === "center" ? "column" : "row",
+        }}
+        justifyContent={
+          headerAlignment === "center"
+            ? "center"
+            : "space-between"
+        }
+        alignItems={
+          headerAlignment === "left"
+            ? "flex-start"
+            : headerAlignment === "right"
+            ? "flex-end"
+            : "center"
+        }
+        textAlign={headerAlignment}
         spacing={2}
+        sx={{
+          bgcolor: invoiceTheme.headerBg,
+          color: invoiceTheme.headerColor,
+          p: 2,
+          borderRadius: `${invoiceTheme.radius}px`,
+          borderLeft: `5px solid ${invoiceTheme.primary}`,
+        }}
       >
-        <Stack direction="row" spacing={2}>
+        <Stack
+          direction={
+            logoPosition === "center"
+              ? "column"
+              : logoPosition === "right"
+              ? "row-reverse"
+              : "row"
+          }
+          spacing={2}
+          alignItems={
+            headerAlignment === "center"
+              ? "center"
+              : "flex-start"
+          }
+          sx={{
+            order: logoPosition === "right" ? 2 : 0,
+          }}
+        >
           {showLogo && (
             <Box
               component="img"
@@ -1021,8 +1225,25 @@ function A4Invoice({
           </Box>
         </Stack>
 
-        <Box textAlign="right">
-          <Typography variant="h5" fontWeight={900}>
+        <Box
+          textAlign={
+            headerAlignment === "center"
+              ? "center"
+              : headerAlignment
+          }
+          sx={{
+            borderLeft:
+              headerAlignment === "right"
+                ? `1px solid ${invoiceTheme.border}`
+                : "none",
+            pl: headerAlignment === "right" ? 2 : 0,
+          }}
+        >
+          <Typography
+            variant="h5"
+            fontWeight={900}
+            sx={{ color: invoiceTheme.primary }}
+          >
             {business.gst_number
               ? "TAX INVOICE"
               : "BILL OF SUPPLY"}
@@ -1039,10 +1260,35 @@ function A4Invoice({
         </Box>
       </Stack>
 
-      <Divider sx={{ my: 2, borderColor: "#000" }} />
+      <Divider
+        sx={{
+          my: 2,
+          borderColor: invoiceTheme.border,
+          borderWidth: invoiceTheme.borderWidth,
+        }}
+      />
 
-      <Box sx={{ mb: 2 }}>
-        <Typography fontWeight={800}>Bill To</Typography>
+      <Box
+        sx={{
+          mb: 2,
+          p: 1.5,
+          bgcolor:
+            printSettings.invoice_theme === "minimal"
+              ? "#F9FAFB"
+              : invoiceTheme.headerBg,
+          borderLeft: `4px solid ${invoiceTheme.primary}`,
+          borderRadius: `${Math.max(
+            0,
+            invoiceTheme.radius - 3
+          )}px`,
+        }}
+      >
+        <Typography
+          fontWeight={900}
+          sx={{ color: invoiceTheme.primary }}
+        >
+          Bill To
+        </Typography>
         <Typography>
           {customer.customer_name || "Walk-in Customer"}
         </Typography>
@@ -1054,9 +1300,32 @@ function A4Invoice({
       <Table
         size="small"
         sx={{
-          border: "1px solid #000",
-          "& th, & td": {
-            border: "1px solid #000",
+          border: `${invoiceTheme.borderWidth}px solid ${invoiceTheme.border}`,
+          borderRadius: `${invoiceTheme.radius}px`,
+          overflow: "hidden",
+          "& th": {
+            bgcolor: invoiceTheme.tableHeaderBg,
+            color: invoiceTheme.tableHeaderColor,
+            fontWeight: 900,
+            border: `${invoiceTheme.borderWidth}px solid ${invoiceTheme.border}`,
+          },
+          "& td": {
+            border:
+              printSettings.invoice_theme === "minimal"
+                ? "none"
+                : `1px solid ${invoiceTheme.border}`,
+            borderBottom:
+              printSettings.invoice_theme === "minimal"
+                ? "1px solid #D1D5DB"
+                : undefined,
+          },
+          "& tbody tr:nth-of-type(even)": {
+            bgcolor:
+              printSettings.invoice_theme === "modern"
+                ? "#F0FDF4"
+                : printSettings.invoice_theme === "professional"
+                ? "#F8FAFF"
+                : "transparent",
           },
         }}
       >
@@ -1077,7 +1346,10 @@ function A4Invoice({
               key={item.id || `${item.item_name}-${index}`}
             >
               <TableCell>
-                <Typography fontWeight={700}>
+                <Typography
+                  fontWeight={900}
+                  sx={{ color: invoiceTheme.primary }}
+                >
                   {item.item_name}
                 </Typography>
                 {showBatchExpiry &&
@@ -1122,8 +1394,14 @@ function A4Invoice({
       <Box
         sx={{
           width: 340,
+          maxWidth: "100%",
           ml: "auto",
           mt: 2,
+          p: 2,
+          bgcolor: invoiceTheme.totalBg,
+          color: invoiceTheme.totalColor,
+          border: `${invoiceTheme.borderWidth}px solid ${invoiceTheme.border}`,
+          borderRadius: `${invoiceTheme.radius}px`,
         }}
       >
         {showSavings && totalMrp > 0 && (
@@ -1188,16 +1466,30 @@ function A4Invoice({
           </Stack>
         )}
 
-        <Divider sx={{ my: 1, borderColor: "#000" }} />
+        <Divider
+          sx={{
+            my: 1,
+            borderColor: invoiceTheme.border,
+            borderWidth: invoiceTheme.borderWidth,
+          }}
+        />
 
         <Stack
           direction="row"
           justifyContent="space-between"
         >
-          <Typography variant="h6" fontWeight={900}>
+          <Typography
+            variant="h6"
+            fontWeight={900}
+            sx={{ color: invoiceTheme.primary }}
+          >
             Grand Total
           </Typography>
-          <Typography variant="h6" fontWeight={900}>
+          <Typography
+            variant="h6"
+            fontWeight={900}
+            sx={{ color: invoiceTheme.primary }}
+          >
             {money(grandTotal)}
           </Typography>
         </Stack>
@@ -1262,7 +1554,10 @@ function A4Invoice({
           spacing={0.5}
           sx={{ mt: 2 }}
         >
-          <Typography fontWeight={900}>
+          <Typography
+            fontWeight={900}
+            sx={{ color: invoiceTheme.primary }}
+          >
             Scan to Pay
           </Typography>
           <Box
@@ -1279,7 +1574,16 @@ function A4Invoice({
         </Stack>
       )}
 
-      <Box textAlign="center" mt={3}>
+      <Box
+        textAlign="center"
+        mt={3}
+        sx={{
+          bgcolor: invoiceTheme.footerBg,
+          borderTop: `2px solid ${invoiceTheme.primary}`,
+          borderRadius: `${invoiceTheme.radius}px`,
+          p: 1.5,
+        }}
+      >
         <Typography fontWeight={800}>
           {printSettings.footer_message ||
             "Thank you for your business. Visit again."}
