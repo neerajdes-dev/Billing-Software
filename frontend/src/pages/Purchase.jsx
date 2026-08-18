@@ -94,40 +94,30 @@ function PurchaseDateField({
   fullWidth = true,
 }) {
   return (
-    <Box sx={{ width: fullWidth ? "100%" : "auto" }}>
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{
-          display: "block",
-          mb: 0.55,
-          ml: 0.25,
-          fontWeight: 600,
-        }}
-      >
-        {label}
-      </Typography>
-
-      <TextField
-        fullWidth={fullWidth}
-        type="date"
-        value={value || ""}
-        onChange={onChange}
-        slotProps={{
-          htmlInput: {
-            "aria-label": label,
-          },
-        }}
-        sx={{
-          "& input[type='date']": {
-            minHeight: 22,
-            py: 1.15,
-          },
-        }}
-      />
-    </Box>
+    <TextField
+      fullWidth={fullWidth}
+      type="date"
+      label={label}
+      value={value || ""}
+      onChange={onChange}
+      slotProps={{
+        inputLabel: {
+          shrink: true,
+        },
+        htmlInput: {
+          "aria-label": label,
+        },
+      }}
+      sx={{
+        "& .MuiInputLabel-root": {
+          bgcolor: "background.paper",
+          px: 0.5,
+        },
+      }}
+    />
   );
 }
+
 
 export default function Purchase() {
   const [dealers, setDealers] = useState([]);
