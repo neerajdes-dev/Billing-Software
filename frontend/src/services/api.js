@@ -342,3 +342,49 @@ export const getPurchaseReturns = () =>
 
 export const getProfitSummary = () =>
   request("/reports/profit-summary");
+
+
+export const getAISettings = () =>
+  request("/ai/settings");
+
+export const updateAISettings = (data) =>
+  request("/ai/settings", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+
+export const testAIConnection = () =>
+  request("/ai/test", {
+    method: "POST",
+  });
+
+export const extractPurchaseBill = async (file) => {
+  const form = new FormData();
+  form.append("file", file);
+
+  const response = await fetch(
+    `${API_URL}/ai/extract-purchase-bill`,
+    {
+      method: "POST",
+      body: form,
+    }
+  );
+
+  let payload = {};
+
+  try {
+    payload = await response.json();
+  } catch {
+    payload = {};
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      payload.detail ||
+        payload.message ||
+        `Request failed (${response.status})`
+    );
+  }
+
+  return payload;
+};

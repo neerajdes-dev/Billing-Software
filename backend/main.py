@@ -2,7 +2,7 @@ import os
 from datetime import datetime, date
 from typing import Any
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -11,6 +11,7 @@ from database import Base, engine, SessionLocal
 import models
 import schemas
 from security import hash_password, verify_password
+from ai_service import encrypt_key, decrypt_key, mask_key, extract_bill, test_provider
 
 
 Base.metadata.create_all(bind=engine)
@@ -18,6 +19,20 @@ Base.metadata.create_all(bind=engine)
 
 def run_database_migrations():
     migration_statements = [
+        """
+        CREATE TABLE IF NOT EXISTS ai_settings (
+            id SERIAL PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            provider VARCHAR NOT NULL DEFAULT 'openai',
+            model VARCHAR,
+            encrypted_api_key TEXT,
+            base_url VARCHAR,
+            ollama_mode VARCHAR DEFAULT 'local',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+
         "ALTER TABLE dealers ADD COLUMN IF NOT EXISTS email VARCHAR",
         "ALTER TABLE dealers ADD COLUMN IF NOT EXISTS gst_number VARCHAR",
         "ALTER TABLE dealers ADD COLUMN IF NOT EXISTS bill_amount DOUBLE PRECISION DEFAULT 0",
@@ -1933,6 +1948,58 @@ def dealer_payment_history(dealer_id: int, db: Session = Depends(get_db)):
     } for p in sorted(dealer.payments, key=lambda x: x.payment_date or datetime.min, reverse=True)]
 
 
+
+
+def _get_ai_settings(db: Session):
+    row=db.query(models.AISettings).order_by(models.AISettings.id.asc()).first()
+    if not row:
+        row=models.AISettings(enabled=0,provider="openai",model="gpt-5-mini")
+        db.add(row); db.commit(); db.refresh(row)
+    return row
+
+@app.get("/ai/settings")
+def get_ai_settings(db: Session=Depends(get_db)):
+    row=_get_ai_settings(db)
+    key=decrypt_key(row.encrypted_api_key) if row.encrypted_api_key else ""
+    return {
+        "enabled":bool(row.enabled),"provider":row.provider,"model":row.model or "",
+        "api_key_configured":bool(key),"api_key_masked":mask_key(key),
+        "base_url":row.base_url or "http://localhost:11434","ollama_mode":row.ollama_mode or "local"
+    }
+
+@app.put("/ai/settings")
+def save_ai_settings(data: schemas.AISettingsUpdate, db: Session=Depends(get_db)):
+    provider=(data.provider or "").lower()
+    if provider not in {"openai","gemini","claude","ollama"}:
+        raise HTTPException(status_code=400,detail="Unsupported AI provider")
+    row=_get_ai_settings(db)
+    row.enabled=1 if data.enabled else 0
+    row.provider=provider; row.model=data.model or None
+    row.base_url=data.base_url or None; row.ollama_mode=data.ollama_mode or "local"
+    if data.api_key is not None and data.api_key.strip():
+        row.encrypted_api_key=encrypt_key(data.api_key.strip())
+    db.commit()
+    return {"message":"AI settings saved"}
+
+@app.post("/ai/test")
+def test_ai_connection(db: Session=Depends(get_db)):
+    row=_get_ai_settings(db)
+    test_provider(row)
+    return {"message":f"{row.provider.title()} connection successful"}
+
+@app.post("/ai/extract-purchase-bill")
+async def ai_extract_purchase_bill(file: UploadFile=File(...), db: Session=Depends(get_db)):
+    row=_get_ai_settings(db)
+    if not row.enabled:
+        raise HTTPException(status_code=400,detail="AI is disabled. Enable it in Settings → AI.")
+    mime=(file.content_type or "").lower()
+    if mime not in {"image/jpeg","image/png","application/pdf"}:
+        raise HTTPException(status_code=400,detail="Only JPG, PNG and PDF bills are supported")
+    raw=await file.read()
+    if not raw: raise HTTPException(status_code=400,detail="Uploaded bill is empty")
+    if len(raw)>20*1024*1024: raise HTTPException(status_code=400,detail="Bill file must be 20 MB or smaller")
+    data=extract_bill(row,raw,mime)
+    return {"provider":row.provider,"model":row.model,"extracted":data}
 
 @app.get("/purchases")
 def get_purchases(db: Session = Depends(get_db)):

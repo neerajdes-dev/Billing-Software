@@ -184,3 +184,12 @@ class UsernameUpdate(BaseModel):
 class PasswordUpdate(BaseModel):
     old_password: str
     new_password: str
+
+
+class AISettingsUpdate(BaseModel):
+    enabled: bool = False
+    provider: str = "openai"
+    model: str | None = None
+    api_key: str | None = None
+    base_url: str | None = None
+    ollama_mode: str = "local"

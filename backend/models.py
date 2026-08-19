@@ -264,3 +264,16 @@ class Expense(Base):
     expense_date = Column(DateTime, default=datetime.now)
     note = Column(String)
     created_at = Column(DateTime, default=datetime.now)
+
+
+class AISettings(Base):
+    __tablename__ = "ai_settings"
+    id = Column(Integer, primary_key=True, index=True)
+    enabled = Column(Integer, nullable=False, default=0)
+    provider = Column(String, nullable=False, default="openai")
+    model = Column(String)
+    encrypted_api_key = Column(String)
+    base_url = Column(String)
+    ollama_mode = Column(String, default="local")
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)

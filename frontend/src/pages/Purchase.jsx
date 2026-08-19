@@ -56,6 +56,8 @@ import {
   getPurchaseDetail,
   getPurchaseReturns,
   getPurchases,
+  extractPurchaseBill,
+  getAISettings,
 } from "../services/api";
 
 const money = (value) =>
@@ -142,6 +144,9 @@ export default function Purchase() {
   const [newItemOpen, setNewItemOpen] = useState(false);
   const [newSupplierOpen, setNewSupplierOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
+  const [aiExtracting, setAIExtracting] = useState(false);
+  const [aiConfigured, setAIConfigured] = useState(false);
+  const [aiReview, setAIReview] = useState(null);
   const [newItem, setNewItem] = useState({
     item_name: "", barcode: "", purchase_price: "", mrp: "", sale_price: "",
     gst_percent: "", minimum_stock: 5, batch_number: "",
@@ -198,6 +203,19 @@ export default function Purchase() {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    getAISettings()
+      .then((data) =>
+        setAIConfigured(
+          Boolean(data?.enabled) &&
+            (data?.provider === "ollama" ||
+              Boolean(data?.api_key_configured))
+        )
+      )
+      .catch(() => setAIConfigured(false));
+  }, []);
+
 
   const subtotal = useMemo(
     () =>
@@ -273,6 +291,257 @@ export default function Purchase() {
       ...current,
       [key]: value,
     }));
+
+  const normalizeName = (value) =>
+    String(value || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+
+  const matchSupplierFromAI = (data) => {
+    const gst = String(data?.supplier_gstin || "")
+      .replace(/\s/g, "")
+      .toUpperCase();
+
+    if (gst) {
+      const byGst = dealers.find(
+        (row) =>
+          String(row.gst_number || "")
+            .replace(/\s/g, "")
+            .toUpperCase() === gst
+      );
+      if (byGst) return byGst;
+    }
+
+    const name = normalizeName(data?.supplier_name);
+    return (
+      dealers.find(
+        (row) =>
+          normalizeName(row.dealer_name) === name
+      ) || null
+    );
+  };
+
+  const matchItemFromAI = (row) => {
+    const barcode = String(row?.barcode || "").trim();
+
+    if (barcode) {
+      const byBarcode = items.find(
+        (item) =>
+          String(item.barcode || "").trim() ===
+          barcode
+      );
+      if (byBarcode) return byBarcode;
+    }
+
+    const name = normalizeName(row?.item_name);
+
+    return (
+      items.find(
+        (item) =>
+          normalizeName(item.item_name) === name
+      ) ||
+      items.find((item) => {
+        const existing = normalizeName(
+          item.item_name
+        );
+
+        return (
+          name.length >= 6 &&
+          (existing.includes(name) ||
+            name.includes(existing))
+        );
+      }) ||
+      null
+    );
+  };
+
+  const extractUploadedBill = async (file) => {
+    if (!file) return;
+
+    try {
+      setAIExtracting(true);
+
+      const response =
+        await extractPurchaseBill(file);
+
+      const extracted =
+        response?.extracted || {};
+
+      const matchedSupplier =
+        matchSupplierFromAI(extracted);
+
+      const reviewItems = (
+        Array.isArray(extracted.items)
+          ? extracted.items
+          : []
+      ).map((row, index) => ({
+        ...row,
+        _key: `${index}-${row.item_name || "item"}`,
+        matchedItem: matchItemFromAI(row),
+      }));
+
+      setAIReview({
+        ...extracted,
+        matchedSupplier,
+        items: reviewItems,
+        provider: response?.provider,
+        model: response?.model,
+      });
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text:
+          error.message ||
+          "Unable to extract purchase bill.",
+      });
+    } finally {
+      setAIExtracting(false);
+    }
+  };
+
+  const updateAIReviewItemMatch = (
+    key,
+    matchedItem
+  ) => {
+    setAIReview((current) => ({
+      ...current,
+      items: (current?.items || []).map(
+        (row) =>
+          row._key === key
+            ? { ...row, matchedItem }
+            : row
+      ),
+    }));
+  };
+
+  const preloadNewItemFromAI = (row) => {
+    setNewItem({
+      item_name: row.item_name || "",
+      barcode: row.barcode || "",
+      purchase_price:
+        row.purchase_price ?? "",
+      mrp: row.mrp ?? "",
+      sale_price: row.sale_price ?? "",
+      gst_percent:
+        row.gst_percent ?? "",
+      minimum_stock: 5,
+      batch_number:
+        row.batch_number || "",
+      manufacturing_date:
+        row.manufacturing_date || "",
+      expiry_date:
+        row.expiry_date || "",
+    });
+    setNewItemOpen(true);
+  };
+
+  const preloadSupplierFromAI = () => {
+    setNewSupplier({
+      dealer_name:
+        aiReview?.supplier_name || "",
+      mobile:
+        aiReview?.supplier_mobile || "",
+      email: "",
+      gst_number:
+        aiReview?.supplier_gstin || "",
+      address: "",
+    });
+    setNewSupplierOpen(true);
+  };
+
+  const applyAIReviewToPurchase = () => {
+    if (!aiReview?.matchedSupplier) {
+      setMessage({
+        type: "warning",
+        text:
+          "Match or create the supplier before applying the AI bill.",
+      });
+      return;
+    }
+
+    const unmatched = (
+      aiReview.items || []
+    ).filter((row) => !row.matchedItem);
+
+    if (unmatched.length) {
+      setMessage({
+        type: "warning",
+        text: `${unmatched.length} extracted item(s) still need to be matched or created.`,
+      });
+      return;
+    }
+
+    setHeader((current) => ({
+      ...current,
+      dealer_id:
+        aiReview.matchedSupplier.id,
+      invoice_number:
+        aiReview.invoice_number || "",
+      purchase_date:
+        aiReview.invoice_date || today(),
+      discount_amount:
+        aiReview.discount_amount ?? "",
+      freight_amount:
+        aiReview.freight_amount ?? "",
+      round_off:
+        aiReview.round_off ?? "",
+    }));
+
+    setCart(
+      (aiReview.items || []).map(
+        (row, index) => {
+          const item = row.matchedItem;
+
+          return {
+            key: `AI-${index}-${item.id}-${
+              row.batch_number ||
+              "NO-BATCH"
+            }`,
+            item_id: item.id,
+            item_name: item.item_name,
+            barcode:
+              item.barcode ||
+              row.barcode ||
+              "",
+            quantity: Number(
+              row.quantity || 1
+            ),
+            purchase_price: Number(
+              row.purchase_price ??
+                item.purchase_price ??
+                0
+            ),
+            mrp: Number(
+              row.mrp ?? item.mrp ?? 0
+            ),
+            sale_price: Number(
+              row.sale_price ??
+                item.sale_price ??
+                0
+            ),
+            gst_percent: Number(
+              row.gst_percent ??
+                item.gst_percent ??
+                0
+            ),
+            batch_number:
+              row.batch_number || "",
+            manufacturing_date:
+              row.manufacturing_date || "",
+            expiry_date:
+              row.expiry_date || "",
+          };
+        }
+      )
+    );
+
+    setAiOpen(false);
+    setMessage({
+      type: "success",
+      text:
+        "AI bill applied to Purchase. Review every field and click Save Purchase only when correct.",
+    });
+  };
 
   const generateLocalBarcode = () => {
     const seed = `${Date.now()}`.slice(-10);
@@ -1703,32 +1972,410 @@ export default function Purchase() {
         </DialogActions>
       </Dialog>
 
-      <Dialog open={aiOpen} onClose={() => setAiOpen(false)} fullWidth maxWidth="md">
-        <DialogTitle>AI Purchase Bill Import</DialogTitle>
+      <Dialog
+        open={aiOpen}
+        onClose={() =>
+          !aiExtracting &&
+          setAiOpen(false)
+        }
+        fullWidth
+        maxWidth="lg"
+      >
+        <DialogTitle>
+          AI Purchase Bill Import
+        </DialogTitle>
+
         <DialogContent dividers>
-          <Alert severity="info" sx={{ mb:2 }}>
-            Review-first design: AI-extracted data will never update stock until the customer checks and confirms it.
+          {!aiConfigured && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              AI is not configured. Open Settings → AI,
+              select OpenAI, Gemini, Claude or Ollama,
+              save the configuration and test the connection.
+            </Alert>
+          )}
+
+          <Alert severity="info" sx={{ mb: 2 }}>
+            AI extraction is review-first. Nothing in this
+            screen changes inventory or supplier balances
+            until you apply the review and then save the
+            Purchase.
           </Alert>
-          <Paper variant="outlined" sx={{p:4,textAlign:"center",borderStyle:"dashed",borderRadius:3}}>
-            <UploadFileRoundedIcon color="primary" sx={{fontSize:44,mb:1}}/>
-            <Typography variant="h6">Upload Purchase Bill</Typography>
-            <Typography variant="body2" color="text.secondary" sx={{my:1.5}}>JPG, PNG or PDF</Typography>
-            <Button component="label" variant="contained" startIcon={<AutoAwesomeRoundedIcon />}>
-              Choose Bill
-              <input hidden type="file" accept="image/png,image/jpeg,application/pdf"
-                onChange={(e)=>{
-                  const file=e.target.files?.[0];
-                  if(file) setMessage({type:"info",text:`${file.name} selected. Connect the AI/OCR service to extract it into the review screen.`});
-                  setAiOpen(false);
-                }}/>
-            </Button>
-          </Paper>
-          <Typography variant="body2" color="text.secondary" sx={{mt:2}}>
-            AI extraction service is not faked in this build. The UI is ready for supplier/GSTIN matching, product matching,
-            confidence indicators, amount validation and user confirmation once an AI/OCR provider is connected.
-          </Typography>
+
+          {!aiReview ? (
+            <Paper
+              variant="outlined"
+              sx={{
+                p: 4,
+                textAlign: "center",
+                borderStyle: "dashed",
+                borderRadius: 3,
+              }}
+            >
+              <UploadFileRoundedIcon
+                color="primary"
+                sx={{ fontSize: 44, mb: 1 }}
+              />
+
+              <Typography variant="h6">
+                Upload Purchase Bill
+              </Typography>
+
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ my: 1.5 }}
+              >
+                JPG, PNG or PDF · Maximum 20 MB
+              </Typography>
+
+              <Button
+                component="label"
+                variant="contained"
+                disabled={
+                  !aiConfigured ||
+                  aiExtracting
+                }
+                startIcon={
+                  <AutoAwesomeRoundedIcon />
+                }
+              >
+                {aiExtracting
+                  ? "Extracting Bill..."
+                  : "Choose Bill & Extract"}
+
+                <input
+                  hidden
+                  type="file"
+                  accept="image/png,image/jpeg,application/pdf"
+                  onChange={(event) => {
+                    const file =
+                      event.target.files?.[0];
+
+                    extractUploadedBill(file);
+                    event.target.value = "";
+                  }}
+                />
+              </Button>
+            </Paper>
+          ) : (
+            <Stack spacing={2.5}>
+              <Stack
+                direction={{
+                  xs: "column",
+                  md: "row",
+                }}
+                justifyContent="space-between"
+                spacing={1}
+              >
+                <Box>
+                  <Typography
+                    variant="h6"
+                    fontWeight={900}
+                  >
+                    AI Extraction Review
+                  </Typography>
+
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                  >
+                    {aiReview.provider} ·{" "}
+                    {aiReview.model || "Configured model"}
+                  </Typography>
+                </Box>
+
+                <Button
+                  variant="outlined"
+                  onClick={() =>
+                    setAIReview(null)
+                  }
+                >
+                  Upload Different Bill
+                </Button>
+              </Stack>
+
+              <Grid container spacing={2}>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <Paper
+                    variant="outlined"
+                    sx={{ p: 2, borderRadius: 3 }}
+                  >
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                    >
+                      Supplier
+                    </Typography>
+
+                    <Typography
+                      fontWeight={900}
+                      sx={{ mt: 0.5 }}
+                    >
+                      {aiReview.supplier_name ||
+                        "Not detected"}
+                    </Typography>
+
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                    >
+                      GSTIN{" "}
+                      {aiReview.supplier_gstin ||
+                        "—"}
+                    </Typography>
+
+                    {aiReview.matchedSupplier ? (
+                      <Chip
+                        sx={{ mt: 1 }}
+                        color="success"
+                        label={`Matched: ${aiReview.matchedSupplier.dealer_name}`}
+                      />
+                    ) : (
+                      <Button
+                        sx={{ mt: 1 }}
+                        size="small"
+                        variant="outlined"
+                        onClick={
+                          preloadSupplierFromAI
+                        }
+                      >
+                        Create Supplier
+                      </Button>
+                    )}
+                  </Paper>
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <Paper
+                    variant="outlined"
+                    sx={{ p: 2, borderRadius: 3 }}
+                  >
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                    >
+                      Invoice
+                    </Typography>
+
+                    <Typography fontWeight={900}>
+                      {aiReview.invoice_number ||
+                        "Not detected"}
+                    </Typography>
+
+                    <Typography variant="body2">
+                      Date:{" "}
+                      {aiReview.invoice_date || "—"}
+                    </Typography>
+
+                    <Typography variant="body2">
+                      Extracted Total:{" "}
+                      {money(
+                        aiReview.total_amount || 0
+                      )}
+                    </Typography>
+                  </Paper>
+                </Grid>
+              </Grid>
+
+              <TableContainer
+                component={Paper}
+                variant="outlined"
+                sx={{ borderRadius: 3 }}
+              >
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>
+                        Extracted Product
+                      </TableCell>
+                      <TableCell>
+                        Inventory Match
+                      </TableCell>
+                      <TableCell align="right">
+                        Qty
+                      </TableCell>
+                      <TableCell align="right">
+                        Purchase
+                      </TableCell>
+                      <TableCell align="right">
+                        MRP
+                      </TableCell>
+                      <TableCell align="right">
+                        GST
+                      </TableCell>
+                      <TableCell>
+                        Confidence
+                      </TableCell>
+                    </TableRow>
+                  </TableHead>
+
+                  <TableBody>
+                    {(aiReview.items || []).map(
+                      (row) => (
+                        <TableRow key={row._key}>
+                          <TableCell>
+                            <Typography
+                              fontWeight={850}
+                            >
+                              {row.item_name ||
+                                "Unnamed item"}
+                            </Typography>
+
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                            >
+                              {[
+                                row.barcode
+                                  ? `Barcode ${row.barcode}`
+                                  : "",
+                                row.batch_number
+                                  ? `Batch ${row.batch_number}`
+                                  : "",
+                                row.expiry_date
+                                  ? `Exp ${row.expiry_date}`
+                                  : "",
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </Typography>
+                          </TableCell>
+
+                          <TableCell
+                            sx={{ minWidth: 270 }}
+                          >
+                            <Stack
+                              direction="row"
+                              spacing={1}
+                              alignItems="center"
+                            >
+                              <Autocomplete
+                                size="small"
+                                fullWidth
+                                options={items}
+                                value={
+                                  row.matchedItem ||
+                                  null
+                                }
+                                onChange={(
+                                  _,
+                                  value
+                                ) =>
+                                  updateAIReviewItemMatch(
+                                    row._key,
+                                    value
+                                  )
+                                }
+                                getOptionLabel={(
+                                  option
+                                ) =>
+                                  option?.item_name ||
+                                  ""
+                                }
+                                renderInput={(
+                                  params
+                                ) => (
+                                  <TextField
+                                    {...params}
+                                    label="Match Item"
+                                  />
+                                )}
+                              />
+
+                              {!row.matchedItem && (
+                                <Button
+                                  size="small"
+                                  onClick={() =>
+                                    preloadNewItemFromAI(
+                                      row
+                                    )
+                                  }
+                                >
+                                  New
+                                </Button>
+                              )}
+                            </Stack>
+                          </TableCell>
+
+                          <TableCell align="right">
+                            {Number(
+                              row.quantity || 0
+                            )}
+                          </TableCell>
+                          <TableCell align="right">
+                            {money(
+                              row.purchase_price
+                            )}
+                          </TableCell>
+                          <TableCell align="right">
+                            {money(row.mrp)}
+                          </TableCell>
+                          <TableCell align="right">
+                            {Number(
+                              row.gst_percent || 0
+                            ).toFixed(2)}
+                            %
+                          </TableCell>
+                          <TableCell>
+                            <Chip
+                              size="small"
+                              color={
+                                Number(
+                                  row.confidence || 0
+                                ) >= 0.9
+                                  ? "success"
+                                  : Number(
+                                      row.confidence ||
+                                        0
+                                    ) >= 0.7
+                                  ? "warning"
+                                  : "error"
+                              }
+                              label={`${Math.round(
+                                Number(
+                                  row.confidence || 0
+                                ) * 100
+                              )}%`}
+                            />
+                          </TableCell>
+                        </TableRow>
+                      )
+                    )}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+
+              <Alert severity="warning">
+                Check supplier, product matches,
+                quantities, prices, GST, batch and
+                expiry before applying this extraction.
+              </Alert>
+            </Stack>
+          )}
         </DialogContent>
-        <DialogActions><Button onClick={()=>setAiOpen(false)}>Close</Button></DialogActions>
+
+        <DialogActions>
+          <Button
+            onClick={() => setAiOpen(false)}
+            disabled={aiExtracting}
+          >
+            Close
+          </Button>
+
+          {aiReview && (
+            <Button
+              variant="contained"
+              startIcon={
+                <AutoAwesomeRoundedIcon />
+              }
+              onClick={
+                applyAIReviewToPurchase
+              }
+            >
+              Apply to Purchase for Final Review
+            </Button>
+          )}
+        </DialogActions>
       </Dialog>
 
     </AppLayout>

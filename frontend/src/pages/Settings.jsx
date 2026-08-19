@@ -29,12 +29,16 @@ import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import PaymentsRoundedIcon from "@mui/icons-material/PaymentsRounded";
 import QrCode2RoundedIcon from "@mui/icons-material/QrCode2Rounded";
 import WorkspacePremiumRoundedIcon from "@mui/icons-material/WorkspacePremiumRounded";
+import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import AppLayout from "../components/AppLayout";
 import PageHeader from "../components/PageHeader";
 import PrintDesignerPreview from "../components/PrintDesignerPreview";
 import {
   getSettings,
   getLoyaltySettings,
+  getAISettings,
+  testAIConnection,
+  updateAISettings,
   updateLoyaltySettings,
   updatePassword,
   updateSettings,
@@ -128,6 +132,19 @@ export default function Settings() {
   );
   const [loyaltySaving, setLoyaltySaving] = useState(false);
 
+  const [aiSettings, setAISettings] = useState({
+    enabled: false,
+    provider: "openai",
+    model: "gpt-5-mini",
+    api_key: "",
+    api_key_configured: false,
+    api_key_masked: "",
+    base_url: "http://localhost:11434",
+    ollama_mode: "local",
+  });
+  const [aiSaving, setAISaving] = useState(false);
+  const [aiTesting, setAITesting] = useState(false);
+
   const logoInputRef = useRef(null);
   const [businessLogo, setBusinessLogo] = useState(
     localStorage.getItem("billing_business_logo") || "/resolvent-logo.jpg"
@@ -167,6 +184,25 @@ export default function Settings() {
         })
       );
   }, []);
+
+  useEffect(() => {
+    getAISettings()
+      .then((data) =>
+        setAISettings((current) => ({
+          ...current,
+          ...(data || {}),
+          api_key: "",
+        }))
+      )
+      .catch(() => {});
+  }, []);
+
+  const updateAISetting = (key, value) => {
+    setAISettings((current) => ({
+      ...current,
+      [key]: value,
+    }));
+  };
 
   const updateLoyaltySetting = (key, value) => {
     setLoyaltySettings((current) => ({
@@ -339,6 +375,55 @@ export default function Settings() {
       });
     } finally {
       setLoyaltySaving(false);
+    }
+  };
+
+  const saveAISettings = async () => {
+    try {
+      setAISaving(true);
+      await updateAISettings({
+        enabled: Boolean(aiSettings.enabled),
+        provider: aiSettings.provider,
+        model: aiSettings.model || null,
+        api_key: aiSettings.api_key || null,
+        base_url: aiSettings.base_url || null,
+        ollama_mode: aiSettings.ollama_mode || "local",
+      });
+      const refreshed = await getAISettings();
+      setAISettings((current) => ({
+        ...current,
+        ...refreshed,
+        api_key: "",
+      }));
+      setMessage({ type: "success", text: "AI configuration saved securely." });
+    } catch (error) {
+      setMessage({ type: "error", text: error.message });
+    } finally {
+      setAISaving(false);
+    }
+  };
+
+  const testConfiguredAI = async () => {
+    try {
+      setAITesting(true);
+      if (aiSettings.api_key) {
+        await updateAISettings({
+          enabled: Boolean(aiSettings.enabled),
+          provider: aiSettings.provider,
+          model: aiSettings.model || null,
+          api_key: aiSettings.api_key,
+          base_url: aiSettings.base_url || null,
+          ollama_mode: aiSettings.ollama_mode || "local",
+        });
+      }
+      const result = await testAIConnection();
+      setMessage({ type: "success", text: result.message || "AI connection successful." });
+      const refreshed = await getAISettings();
+      setAISettings((current) => ({ ...current, ...refreshed, api_key: "" }));
+    } catch (error) {
+      setMessage({ type: "error", text: error.message });
+    } finally {
+      setAITesting(false);
     }
   };
 
@@ -1214,6 +1299,150 @@ export default function Settings() {
     </Grid>
   );
 
+  const aiPanel = (
+    <Grid container spacing={3}>
+      <Grid size={{ xs: 12, lg: 7 }}>
+        <Card>
+          <CardContent sx={{ p: 3 }}>
+            <Stack direction="row" spacing={1.5} alignItems="center" mb={3}>
+              <AutoAwesomeRoundedIcon color="primary" />
+              <Box>
+                <Typography variant="h6">AI Configuration</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                  Connect your own AI provider. If AI is disabled or no provider is configured,
+                  billing and manual purchase entry continue to work normally.
+                </Typography>
+              </Box>
+            </Stack>
+
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={Boolean(aiSettings.enabled)}
+                  onChange={(e) => updateAISetting("enabled", e.target.checked)}
+                />
+              }
+              label="Enable AI features"
+            />
+
+            <Grid container spacing={2} sx={{ mt: 1 }}>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  select fullWidth label="AI Provider"
+                  value={aiSettings.provider}
+                  onChange={(e) => {
+                    const provider=e.target.value;
+                    const defaults={
+                      openai:"gpt-5-mini",
+                      gemini:"gemini-2.5-flash",
+                      claude:"claude-sonnet-4-5",
+                      ollama:"gemma3",
+                    };
+                    setAISettings((current)=>({
+                      ...current, provider, model:defaults[provider] || "", api_key:""
+                    }));
+                  }}
+                >
+                  <MenuItem value="openai">OpenAI</MenuItem>
+                  <MenuItem value="gemini">Google Gemini</MenuItem>
+                  <MenuItem value="claude">Anthropic Claude</MenuItem>
+                  <MenuItem value="ollama">Ollama</MenuItem>
+                </TextField>
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  fullWidth label="Model"
+                  value={aiSettings.model || ""}
+                  onChange={(e)=>updateAISetting("model",e.target.value)}
+                  helperText="You can change the model without changing application code."
+                />
+              </Grid>
+
+              {aiSettings.provider === "ollama" && (
+                <>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      select fullWidth label="Ollama Mode"
+                      value={aiSettings.ollama_mode || "local"}
+                      onChange={(e)=>updateAISetting("ollama_mode",e.target.value)}
+                    >
+                      <MenuItem value="local">Local</MenuItem>
+                      <MenuItem value="cloud">Cloud / Remote</MenuItem>
+                    </TextField>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      fullWidth label="Base URL"
+                      value={aiSettings.base_url || ""}
+                      onChange={(e)=>updateAISetting("base_url",e.target.value)}
+                      helperText="Example: http://localhost:11434"
+                    />
+                  </Grid>
+                </>
+              )}
+
+              {(aiSettings.provider !== "ollama" || aiSettings.ollama_mode === "cloud") && (
+                <Grid size={{ xs: 12 }}>
+                  <TextField
+                    fullWidth
+                    type="password"
+                    label="API Key"
+                    value={aiSettings.api_key || ""}
+                    placeholder={
+                      aiSettings.api_key_configured
+                        ? aiSettings.api_key_masked || "Key already configured"
+                        : "Paste API key"
+                    }
+                    onChange={(e)=>updateAISetting("api_key",e.target.value)}
+                    helperText={
+                      aiSettings.api_key_configured
+                        ? `Stored securely on the backend (${aiSettings.api_key_masked}). Leave blank to keep the existing key.`
+                        : "The key is sent to the backend and is not saved in browser localStorage."
+                    }
+                  />
+                </Grid>
+              )}
+            </Grid>
+
+            <Stack direction={{ xs:"column", sm:"row" }} spacing={1.5} sx={{ mt:3 }}>
+              <Button variant="contained" startIcon={<SaveRoundedIcon />}
+                onClick={saveAISettings} disabled={aiSaving}>
+                {aiSaving ? "Saving..." : "Save AI Configuration"}
+              </Button>
+              <Button variant="outlined" startIcon={<AutoAwesomeRoundedIcon />}
+                onClick={testConfiguredAI} disabled={aiTesting}>
+                {aiTesting ? "Testing..." : "Test Connection"}
+              </Button>
+            </Stack>
+          </CardContent>
+        </Card>
+      </Grid>
+
+      <Grid size={{ xs: 12, lg: 5 }}>
+        <Card>
+          <CardContent sx={{ p: 3 }}>
+            <Typography variant="h6">AI Status</Typography>
+            <Stack spacing={1.5} sx={{ mt:2 }}>
+              <Paper variant="outlined" sx={{p:2,borderRadius:3}}>
+                <Typography variant="caption" color="text.secondary">Provider</Typography>
+                <Typography fontWeight={900}>{String(aiSettings.provider || "").toUpperCase()}</Typography>
+              </Paper>
+              <Paper variant="outlined" sx={{p:2,borderRadius:3}}>
+                <Typography variant="caption" color="text.secondary">AI Features</Typography>
+                <Typography fontWeight={900} color={aiSettings.enabled ? "success.main" : "text.secondary"}>
+                  {aiSettings.enabled ? "Enabled" : "Disabled"}
+                </Typography>
+              </Paper>
+              <Alert severity="info">
+                Purchase Bill AI always uses Review → Confirm. Extraction never updates stock automatically.
+              </Alert>
+            </Stack>
+          </CardContent>
+        </Card>
+      </Grid>
+    </Grid>
+  );
+
   const accountPanel = (
     <Grid container spacing={3}>
       <Grid size={{ xs: 12, md: 6 }}>
@@ -1327,6 +1556,7 @@ export default function Settings() {
           <Tab icon={<PrintRoundedIcon />} iconPosition="start" label="Print Designer" />
           <Tab icon={<PaymentsRoundedIcon />} iconPosition="start" label="Payment QR" />
           <Tab icon={<WorkspacePremiumRoundedIcon />} iconPosition="start" label="Loyalty" />
+          <Tab icon={<AutoAwesomeRoundedIcon />} iconPosition="start" label="AI" />
           <Tab icon={<PersonRoundedIcon />} iconPosition="start" label="Account & Security" />
         </Tabs>
       </Card>
@@ -1335,7 +1565,8 @@ export default function Settings() {
       {tab === 1 && designerPanel}
       {tab === 2 && paymentPanel}
       {tab === 3 && loyaltyPanel}
-      {tab === 4 && accountPanel}
+      {tab === 4 && aiPanel}
+      {tab === 5 && accountPanel}
     </AppLayout>
   );
 }

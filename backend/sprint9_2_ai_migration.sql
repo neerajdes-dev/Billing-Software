@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS ai_settings (
+ id SERIAL PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0,
+ provider VARCHAR NOT NULL DEFAULT 'openai', model VARCHAR,
+ encrypted_api_key TEXT, base_url VARCHAR, ollama_mode VARCHAR DEFAULT 'local',
+ created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
