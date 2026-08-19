@@ -34,6 +34,10 @@ import Inventory2RoundedIcon from "@mui/icons-material/Inventory2Rounded";
 import LocalShippingRoundedIcon from "@mui/icons-material/LocalShippingRounded";
 import PaymentsRoundedIcon from "@mui/icons-material/PaymentsRounded";
 import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
+import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
+import AddBusinessRoundedIcon from "@mui/icons-material/AddBusinessRounded";
+import QrCode2RoundedIcon from "@mui/icons-material/QrCode2Rounded";
+import UploadFileRoundedIcon from "@mui/icons-material/UploadFileRounded";
 import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
@@ -42,6 +46,8 @@ import AppLayout from "../components/AppLayout";
 import PageHeader from "../components/PageHeader";
 import {
   createPurchase,
+  addItem,
+  addDealer,
   createPurchaseReturn,
   getDealers,
   getItems,
@@ -133,6 +139,17 @@ export default function Purchase() {
 
   const [message, setMessage] = useState({ type: "", text: "" });
   const [saving, setSaving] = useState(false);
+  const [newItemOpen, setNewItemOpen] = useState(false);
+  const [newSupplierOpen, setNewSupplierOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [newItem, setNewItem] = useState({
+    item_name: "", barcode: "", purchase_price: "", mrp: "", sale_price: "",
+    gst_percent: "", minimum_stock: 5, batch_number: "",
+    manufacturing_date: "", expiry_date: "",
+  });
+  const [newSupplier, setNewSupplier] = useState({
+    dealer_name: "", mobile: "", email: "", gst_number: "", address: "",
+  });
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detail, setDetail] = useState(null);
@@ -256,6 +273,65 @@ export default function Purchase() {
       ...current,
       [key]: value,
     }));
+
+  const generateLocalBarcode = () => {
+    const seed = `${Date.now()}`.slice(-10);
+    setNewItem((current) => ({ ...current, barcode: `29${seed}` }));
+  };
+
+  const createItemInsidePurchase = async () => {
+    if (!newItem.item_name.trim() || !newItem.barcode.trim()) {
+      setMessage({ type: "warning", text: "Product name and barcode are required." });
+      return;
+    }
+    try {
+      setSaving(true);
+      const created = await addItem({
+        item_name: newItem.item_name.trim(),
+        barcode: newItem.barcode.trim(),
+        purchase_price: Number(newItem.purchase_price || 0),
+        mrp: Number(newItem.mrp || 0),
+        sale_price: Number(newItem.sale_price || 0),
+        gst_percent: Number(newItem.gst_percent || 0),
+        stock: 0,
+        minimum_stock: Number(newItem.minimum_stock || 5),
+        batch_number: newItem.batch_number || null,
+        manufacturing_date: newItem.manufacturing_date || null,
+        expiry_date: newItem.expiry_date || null,
+        expiry_alert_days: 30,
+      });
+      setItems(await getItems());
+      selectItem(null, created);
+      setNewItemOpen(false);
+      setNewItem({ item_name:"", barcode:"", purchase_price:"", mrp:"", sale_price:"",
+        gst_percent:"", minimum_stock:5, batch_number:"", manufacturing_date:"", expiry_date:"" });
+      setMessage({ type:"success", text:"Product created and selected. Stock stays 0 until this purchase is saved." });
+    } catch (error) {
+      setMessage({ type:"error", text:error.message || "Unable to create product." });
+    } finally { setSaving(false); }
+  };
+
+  const createSupplierInsidePurchase = async () => {
+    if (!newSupplier.dealer_name.trim()) {
+      setMessage({ type:"warning", text:"Supplier name is required." });
+      return;
+    }
+    try {
+      setSaving(true);
+      const created = await addDealer({
+        dealer_name:newSupplier.dealer_name.trim(), mobile:newSupplier.mobile.trim(),
+        email:newSupplier.email.trim() || null, gst_number:newSupplier.gst_number.trim() || null,
+        address:newSupplier.address.trim() || null,
+      });
+      setDealers(await getDealers());
+      updateHeader("dealer_id", created.id);
+      setNewSupplierOpen(false);
+      setNewSupplier({ dealer_name:"", mobile:"", email:"", gst_number:"", address:"" });
+      setMessage({ type:"success", text:"Supplier created and selected." });
+    } catch (error) {
+      setMessage({ type:"error", text:error.message || "Unable to create supplier." });
+    } finally { setSaving(false); }
+  };
 
   const addLine = () => {
     if (!line.item) {
@@ -695,9 +771,18 @@ export default function Purchase() {
 
           <Divider sx={{ my: 3 }} />
 
-          <Typography fontWeight={850} sx={{ mb: 1.5 }}>
-            Add Products
-          </Typography>
+          <Stack direction={{ xs:"column", sm:"row" }} justifyContent="space-between"
+            alignItems={{ xs:"flex-start", sm:"center" }} spacing={1} sx={{ mb:1.5 }}>
+            <Typography fontWeight={850}>Add Products</Typography>
+            <Stack direction="row" spacing={1}>
+              <Button size="small" variant="outlined" startIcon={<AddBusinessRoundedIcon />}
+                onClick={() => setNewSupplierOpen(true)}>New Supplier</Button>
+              <Button size="small" variant="outlined" startIcon={<AddRoundedIcon />}
+                onClick={() => setNewItemOpen(true)}>Create New Item</Button>
+              <Button size="small" variant="contained" startIcon={<AutoAwesomeRoundedIcon />}
+                onClick={() => setAiOpen(true)}>AI Import Bill</Button>
+            </Stack>
+          </Stack>
 
           <Grid container spacing={1.5}>
             <Grid size={{ xs: 12, lg: 4 }}>
@@ -1559,6 +1644,93 @@ export default function Purchase() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <Dialog open={newSupplierOpen} onClose={() => setNewSupplierOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Create Supplier in Purchase</DialogTitle>
+        <DialogContent dividers>
+          <Alert severity="info" sx={{ mb:2 }}>Create and select a supplier without leaving this purchase.</Alert>
+          <Stack spacing={2}>
+            <TextField label="Supplier Name *" value={newSupplier.dealer_name}
+              onChange={(e)=>setNewSupplier({...newSupplier,dealer_name:e.target.value})}/>
+            <TextField label="Mobile" value={newSupplier.mobile}
+              onChange={(e)=>setNewSupplier({...newSupplier,mobile:e.target.value})}/>
+            <TextField label="GSTIN" value={newSupplier.gst_number}
+              onChange={(e)=>setNewSupplier({...newSupplier,gst_number:e.target.value})}/>
+            <TextField label="Email" value={newSupplier.email}
+              onChange={(e)=>setNewSupplier({...newSupplier,email:e.target.value})}/>
+            <TextField multiline rows={2} label="Address" value={newSupplier.address}
+              onChange={(e)=>setNewSupplier({...newSupplier,address:e.target.value})}/>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={()=>setNewSupplierOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={createSupplierInsidePurchase} disabled={saving}>Create & Select</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={newItemOpen} onClose={() => setNewItemOpen(false)} fullWidth maxWidth="md">
+        <DialogTitle>Create New Item & Add to Purchase</DialogTitle>
+        <DialogContent dividers>
+          <Alert severity="info" sx={{ mb:2 }}>
+            Opening stock is 0 here. The purchase quantity increases stock only after the purchase is reviewed and saved.
+          </Alert>
+          <Grid container spacing={2}>
+            <Grid size={{xs:12,md:6}}><TextField fullWidth label="Product Name *" value={newItem.item_name}
+              onChange={(e)=>setNewItem({...newItem,item_name:e.target.value})}/></Grid>
+            <Grid size={{xs:12,md:6}}>
+              <Stack direction="row" spacing={1}>
+                <TextField fullWidth label="Barcode *" value={newItem.barcode}
+                  onChange={(e)=>setNewItem({...newItem,barcode:e.target.value})}/>
+                <Button variant="outlined" startIcon={<QrCode2RoundedIcon />} onClick={generateLocalBarcode}>Generate</Button>
+              </Stack>
+            </Grid>
+            {[["Purchase Price","purchase_price"],["MRP","mrp"],["Sale Price","sale_price"],
+              ["GST %","gst_percent"],["Minimum Stock","minimum_stock"],["Batch Number","batch_number"]].map(([label,key])=>(
+              <Grid key={key} size={{xs:12,sm:6,md:4}}>
+                <TextField fullWidth type={key==="batch_number"?"text":"number"} label={label} value={newItem[key]}
+                  onChange={(e)=>setNewItem({...newItem,[key]:e.target.value})}/>
+              </Grid>
+            ))}
+            <Grid size={{xs:12,sm:6}}><PurchaseDateField label="Manufacturing Date" value={newItem.manufacturing_date}
+              onChange={(e)=>setNewItem({...newItem,manufacturing_date:e.target.value})}/></Grid>
+            <Grid size={{xs:12,sm:6}}><PurchaseDateField label="Expiry Date" value={newItem.expiry_date}
+              onChange={(e)=>setNewItem({...newItem,expiry_date:e.target.value})}/></Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={()=>setNewItemOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={createItemInsidePurchase} disabled={saving}>Create & Select Product</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={aiOpen} onClose={() => setAiOpen(false)} fullWidth maxWidth="md">
+        <DialogTitle>AI Purchase Bill Import</DialogTitle>
+        <DialogContent dividers>
+          <Alert severity="info" sx={{ mb:2 }}>
+            Review-first design: AI-extracted data will never update stock until the customer checks and confirms it.
+          </Alert>
+          <Paper variant="outlined" sx={{p:4,textAlign:"center",borderStyle:"dashed",borderRadius:3}}>
+            <UploadFileRoundedIcon color="primary" sx={{fontSize:44,mb:1}}/>
+            <Typography variant="h6">Upload Purchase Bill</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{my:1.5}}>JPG, PNG or PDF</Typography>
+            <Button component="label" variant="contained" startIcon={<AutoAwesomeRoundedIcon />}>
+              Choose Bill
+              <input hidden type="file" accept="image/png,image/jpeg,application/pdf"
+                onChange={(e)=>{
+                  const file=e.target.files?.[0];
+                  if(file) setMessage({type:"info",text:`${file.name} selected. Connect the AI/OCR service to extract it into the review screen.`});
+                  setAiOpen(false);
+                }}/>
+            </Button>
+          </Paper>
+          <Typography variant="body2" color="text.secondary" sx={{mt:2}}>
+            AI extraction service is not faked in this build. The UI is ready for supplier/GSTIN matching, product matching,
+            confidence indicators, amount validation and user confirmation once an AI/OCR provider is connected.
+          </Typography>
+        </DialogContent>
+        <DialogActions><Button onClick={()=>setAiOpen(false)}>Close</Button></DialogActions>
+      </Dialog>
+
     </AppLayout>
   );
 }
