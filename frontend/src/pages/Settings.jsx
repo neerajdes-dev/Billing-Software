@@ -139,7 +139,7 @@ export default function Settings() {
     api_key: "",
     api_key_configured: false,
     api_key_masked: "",
-    base_url: "http://localhost:11434",
+    base_url: "http://127.0.0.1:11434",
     ollama_mode: "local",
   });
   const [aiSaving, setAISaving] = useState(false);
@@ -420,7 +420,9 @@ export default function Settings() {
 
       setMessage({
         type: "success",
-        text: result.message || "AI connection successful.",
+        text:
+          result.message ||
+          "AI connection successful.",
       });
 
       const refreshed = await getAISettings();
@@ -1371,11 +1373,19 @@ export default function Settings() {
               </Grid>
 
               {aiSettings.provider === "ollama" && (
-                <Alert severity="info" sx={{ gridColumn: "1 / -1" }}>
-                  Local Ollama does not require an API key. Use
-                  http://127.0.0.1:11434 only when the FastAPI backend is
-                  running on the same computer as Ollama.
-                </Alert>
+                <Grid size={{ xs: 12 }}>
+                  <Alert
+                    severity={
+                      aiSettings.ollama_mode === "cloud"
+                        ? "success"
+                        : "info"
+                    }
+                  >
+                    {aiSettings.ollama_mode === "cloud"
+                      ? "Ollama Cloud works with the hosted Billing Software. Use https://ollama.com, enter your Ollama API key, and select a cloud-capable model."
+                      : "Local Ollama needs no API key, but localhost works only when FastAPI can reach Ollama on the same computer/network. A Render-hosted backend cannot reach Ollama on your Windows localhost."}
+                  </Alert>
+                </Grid>
               )}
 
               {aiSettings.provider === "ollama" && (
@@ -1384,10 +1394,29 @@ export default function Settings() {
                     <TextField
                       select fullWidth label="Ollama Mode"
                       value={aiSettings.ollama_mode || "local"}
-                      onChange={(e)=>updateAISetting("ollama_mode",e.target.value)}
+                      onChange={(e) => {
+                        const mode = e.target.value;
+                        setAISettings((current) => ({
+                          ...current,
+                          ollama_mode: mode,
+                          base_url:
+                            mode === "cloud"
+                              ? "https://ollama.com"
+                              : "http://127.0.0.1:11434",
+                          model:
+                            mode === "cloud"
+                              ? (String(current.model || "").includes(":cloud")
+                                  ? current.model
+                                  : "mistral-large-3")
+                              : (String(current.model || "").includes(":cloud")
+                                  ? "gemma3"
+                                  : current.model),
+                          api_key: "",
+                        }));
+                      }}
                     >
                       <MenuItem value="local">Local</MenuItem>
-                      <MenuItem value="cloud">Cloud / Remote</MenuItem>
+                      <MenuItem value="cloud">Ollama Cloud / Remote</MenuItem>
                     </TextField>
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
@@ -1395,7 +1424,11 @@ export default function Settings() {
                       fullWidth label="Base URL"
                       value={aiSettings.base_url || ""}
                       onChange={(e)=>updateAISetting("base_url",e.target.value)}
-                      helperText="Example: http://localhost:11434"
+                      helperText={
+                        aiSettings.ollama_mode === "cloud"
+                          ? "Ollama Cloud: https://ollama.com"
+                          : "Local Ollama: http://127.0.0.1:11434"
+                      }
                     />
                   </Grid>
                 </>
@@ -1406,7 +1439,11 @@ export default function Settings() {
                   <TextField
                     fullWidth
                     type="password"
-                    label="API Key"
+                    label={
+                      aiSettings.provider === "ollama"
+                        ? "Ollama Cloud API Key"
+                        : "API Key"
+                    }
                     value={aiSettings.api_key || ""}
                     placeholder={
                       aiSettings.api_key_configured

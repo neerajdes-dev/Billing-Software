@@ -87,49 +87,143 @@ def extract_claude(api_key, model, mime, raw):
     out=_request("https://api.anthropic.com/v1/messages",payload,{"x-api-key":api_key,"anthropic-version":"2023-06-01"})
     return _json_from_text("".join(x.get("text","") for x in out.get("content",[]) if x.get("type")=="text"))
 
-def extract_ollama(base_url, model, mime, raw):
+def extract_ollama(base_url, model, mime, raw, mode="local", api_key=""):
+    mode=(mode or "local").strip().lower()
+    is_cloud=mode=="cloud"
+
     if mime=="application/pdf":
-        raise HTTPException(status_code=400,detail="Ollama local PDF extraction is not enabled in this build. Upload a JPG/PNG bill or use OpenAI/Gemini/Claude.")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Ollama purchase-bill extraction currently supports JPG/PNG images. "
+                "Convert the PDF page to an image or use OpenAI/Gemini/Claude for PDF bills."
+            ),
+        )
+
+    if not mime.startswith("image/"):
+        raise HTTPException(status_code=400,detail="Ollama requires a JPG or PNG bill image")
+
+    if is_cloud and not api_key:
+        raise HTTPException(status_code=400,detail="Ollama Cloud API key is not configured")
+
+    url=(
+        base_url
+        or ("https://ollama.com" if is_cloud else "http://127.0.0.1:11434")
+    ).rstrip("/") + "/api/chat"
+
+    headers={}
+    if is_cloud:
+        headers["Authorization"]=f"Bearer {api_key}"
+
     b64=base64.b64encode(raw).decode()
-    payload={"model":model or "gemma3","messages":[{"role":"user","content":PROMPT,"images":[b64]}],"format":"json","stream":False}
-    out=_request((base_url or "http://127.0.0.1:11434").rstrip("/")+"/api/chat",payload,timeout=180)
+    payload={
+        "model":model or ("gemma3" if not is_cloud else "mistral-large-3"),
+        "messages":[
+            {
+                "role":"user",
+                "content":PROMPT,
+                "images":[b64],
+            }
+        ],
+        "format":"json",
+        "stream":False,
+    }
+
+    out=_request(url,payload,headers,timeout=180)
     return _json_from_text(out.get("message",{}).get("content",""))
 
 def extract_bill(settings, raw, mime):
-    provider=(settings.provider or "").lower()
-    key=decrypt_key(settings.encrypted_api_key)
-    if provider=="openai": return extract_openai(key,settings.model,mime,raw)
-    if provider=="gemini": return extract_gemini(key,settings.model,mime,raw)
-    if provider=="claude": return extract_claude(key,settings.model,mime,raw)
-    if provider=="ollama": return extract_ollama(settings.base_url,settings.model,mime,raw)
+    provider=(settings.provider or "").strip().lower()
+    key=decrypt_key(settings.encrypted_api_key) if settings.encrypted_api_key else ""
+
+    if provider=="openai":
+        if not key:
+            raise HTTPException(status_code=400,detail="OpenAI API key is not configured")
+        return extract_openai(key,settings.model,mime,raw)
+
+    if provider=="gemini":
+        if not key:
+            raise HTTPException(status_code=400,detail="Gemini API key is not configured")
+        return extract_gemini(key,settings.model,mime,raw)
+
+    if provider=="claude":
+        if not key:
+            raise HTTPException(status_code=400,detail="Claude API key is not configured")
+        return extract_claude(key,settings.model,mime,raw)
+
+    if provider=="ollama":
+        return extract_ollama(
+            settings.base_url,
+            settings.model,
+            mime,
+            raw,
+            settings.ollama_mode or "local",
+            key,
+        )
+
     raise HTTPException(status_code=400,detail="Unsupported AI provider")
 
 def test_provider(settings):
     provider=(settings.provider or "").strip().lower()
 
     if provider=="ollama":
-        out=_request((settings.base_url or "http://127.0.0.1:11434").rstrip("/")+"/api/chat",
-            {"model":settings.model or "gemma3","messages":[{"role":"user","content":"Reply with OK only."}],"stream":False},timeout=30)
+        mode=(settings.ollama_mode or "local").strip().lower()
+        is_cloud=mode=="cloud"
+        key=decrypt_key(settings.encrypted_api_key) if settings.encrypted_api_key else ""
+
+        if is_cloud and not key:
+            raise HTTPException(status_code=400,detail="Ollama Cloud API key is not configured")
+
+        base_url=(
+            settings.base_url
+            or ("https://ollama.com" if is_cloud else "http://127.0.0.1:11434")
+        ).rstrip("/")
+
+        headers={}
+        if is_cloud:
+            headers["Authorization"]=f"Bearer {key}"
+
+        out=_request(
+            base_url+"/api/chat",
+            {
+                "model":settings.model or ("mistral-large-3" if is_cloud else "gemma3"),
+                "messages":[{"role":"user","content":"Reply with OK only."}],
+                "stream":False,
+            },
+            headers,
+            timeout=45,
+        )
         return bool(out.get("message"))
 
-    key=decrypt_key(settings.encrypted_api_key)
+    key=decrypt_key(settings.encrypted_api_key) if settings.encrypted_api_key else ""
     if not key:
         raise HTTPException(
             status_code=400,
             detail=f"API key is not configured for {provider.title()}",
         )
-    # provider-specific lightweight test uses same public generation APIs
+
     if provider=="gemini":
-        _request(f"https://generativelanguage.googleapis.com/v1beta/models/{settings.model or 'gemini-2.5-flash'}:generateContent?key={key}",
-                 {"contents":[{"parts":[{"text":"Reply OK"}]}]})
+        _request(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{settings.model or 'gemini-2.5-flash'}:generateContent?key={key}",
+            {"contents":[{"parts":[{"text":"Reply OK"}]}]},
+        )
     elif provider=="claude":
-        _request("https://api.anthropic.com/v1/messages",
-                 {"model":settings.model or "claude-sonnet-4-5","max_tokens":10,"messages":[{"role":"user","content":"Reply OK"}]},
-                 {"x-api-key":key,"anthropic-version":"2023-06-01"})
+        _request(
+            "https://api.anthropic.com/v1/messages",
+            {
+                "model":settings.model or "claude-sonnet-4-5",
+                "max_tokens":10,
+                "messages":[{"role":"user","content":"Reply OK"}],
+            },
+            {"x-api-key":key,"anthropic-version":"2023-06-01"},
+        )
     elif provider=="openai":
-        _request("https://api.openai.com/v1/responses",
-                 {"model":settings.model or "gpt-5-mini","input":"Reply OK"},
-                 {"Authorization":f"Bearer {key}"})
+        _request(
+            "https://api.openai.com/v1/responses",
+            {"model":settings.model or "gpt-5-mini","input":"Reply OK"},
+            {"Authorization":f"Bearer {key}"},
+        )
     else:
         raise HTTPException(status_code=400,detail="Unsupported AI provider")
+
     return True
