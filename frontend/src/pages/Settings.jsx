@@ -406,22 +406,34 @@ export default function Settings() {
   const testConfiguredAI = async () => {
     try {
       setAITesting(true);
-      if (aiSettings.api_key) {
-        await updateAISettings({
-          enabled: Boolean(aiSettings.enabled),
-          provider: aiSettings.provider,
-          model: aiSettings.model || null,
-          api_key: aiSettings.api_key,
-          base_url: aiSettings.base_url || null,
-          ollama_mode: aiSettings.ollama_mode || "local",
-        });
-      }
+
+      await updateAISettings({
+        enabled: Boolean(aiSettings.enabled),
+        provider: aiSettings.provider,
+        model: aiSettings.model || null,
+        api_key: aiSettings.api_key || null,
+        base_url: aiSettings.base_url || null,
+        ollama_mode: aiSettings.ollama_mode || "local",
+      });
+
       const result = await testAIConnection();
-      setMessage({ type: "success", text: result.message || "AI connection successful." });
+
+      setMessage({
+        type: "success",
+        text: result.message || "AI connection successful.",
+      });
+
       const refreshed = await getAISettings();
-      setAISettings((current) => ({ ...current, ...refreshed, api_key: "" }));
+      setAISettings((current) => ({
+        ...current,
+        ...refreshed,
+        api_key: "",
+      }));
     } catch (error) {
-      setMessage({ type: "error", text: error.message });
+      setMessage({
+        type: "error",
+        text: error.message,
+      });
     } finally {
       setAITesting(false);
     }
@@ -1357,6 +1369,14 @@ export default function Settings() {
                   helperText="You can change the model without changing application code."
                 />
               </Grid>
+
+              {aiSettings.provider === "ollama" && (
+                <Alert severity="info" sx={{ gridColumn: "1 / -1" }}>
+                  Local Ollama does not require an API key. Use
+                  http://127.0.0.1:11434 only when the FastAPI backend is
+                  running on the same computer as Ollama.
+                </Alert>
+              )}
 
               {aiSettings.provider === "ollama" && (
                 <>

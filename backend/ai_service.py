@@ -92,7 +92,7 @@ def extract_ollama(base_url, model, mime, raw):
         raise HTTPException(status_code=400,detail="Ollama local PDF extraction is not enabled in this build. Upload a JPG/PNG bill or use OpenAI/Gemini/Claude.")
     b64=base64.b64encode(raw).decode()
     payload={"model":model or "gemma3","messages":[{"role":"user","content":PROMPT,"images":[b64]}],"format":"json","stream":False}
-    out=_request((base_url or "http://localhost:11434").rstrip("/")+"/api/chat",payload,timeout=180)
+    out=_request((base_url or "http://127.0.0.1:11434").rstrip("/")+"/api/chat",payload,timeout=180)
     return _json_from_text(out.get("message",{}).get("content",""))
 
 def extract_bill(settings, raw, mime):
@@ -105,13 +105,19 @@ def extract_bill(settings, raw, mime):
     raise HTTPException(status_code=400,detail="Unsupported AI provider")
 
 def test_provider(settings):
-    provider=(settings.provider or "").lower()
+    provider=(settings.provider or "").strip().lower()
+
     if provider=="ollama":
-        out=_request((settings.base_url or "http://localhost:11434").rstrip("/")+"/api/chat",
+        out=_request((settings.base_url or "http://127.0.0.1:11434").rstrip("/")+"/api/chat",
             {"model":settings.model or "gemma3","messages":[{"role":"user","content":"Reply with OK only."}],"stream":False},timeout=30)
         return bool(out.get("message"))
+
     key=decrypt_key(settings.encrypted_api_key)
-    if not key: raise HTTPException(status_code=400,detail="API key is not configured")
+    if not key:
+        raise HTTPException(
+            status_code=400,
+            detail=f"API key is not configured for {provider.title()}",
+        )
     # provider-specific lightweight test uses same public generation APIs
     if provider=="gemini":
         _request(f"https://generativelanguage.googleapis.com/v1beta/models/{settings.model or 'gemini-2.5-flash'}:generateContent?key={key}",
