@@ -388,3 +388,30 @@ export const extractPurchaseBill = async (file) => {
 
   return payload;
 };
+
+
+// Sprint 10 — Returns & Inventory Control
+export const getSaleReturnDetail = (saleId) =>
+  request(`/sales/${saleId}/return-detail`);
+
+export const createSalesReturn = (data) =>
+  request("/sales-returns", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+
+export const getSalesReturns = () =>
+  request("/sales-returns");
+
+export const getInventoryMovements = (itemId = "", movementType = "All") => {
+  const params = new URLSearchParams();
+  if (itemId) params.set("item_id", itemId);
+  if (movementType && movementType !== "All") {
+    params.set("movement_type", movementType);
+  }
+  const query = params.toString();
+  return request(`/inventory-movements${query ? `?${query}` : ""}`);
+};
+
+export const getReturnsDashboard = () =>
+  request("/returns/dashboard");

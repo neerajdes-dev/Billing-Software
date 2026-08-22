@@ -127,6 +127,38 @@ def run_database_migrations():
         )
         """,
 
+        "ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS returned_quantity INTEGER DEFAULT 0",
+        """
+        CREATE TABLE IF NOT EXISTS sales_returns (
+            id SERIAL PRIMARY KEY,
+            sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+            sale_item_id INTEGER NOT NULL REFERENCES sale_items(id) ON DELETE CASCADE,
+            item_id INTEGER NOT NULL REFERENCES items(id),
+            quantity INTEGER NOT NULL,
+            return_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+            reason VARCHAR NOT NULL,
+            refund_method VARCHAR NOT NULL DEFAULT 'Cash',
+            return_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS inventory_movements (
+            id SERIAL PRIMARY KEY,
+            item_id INTEGER NOT NULL REFERENCES items(id),
+            movement_type VARCHAR NOT NULL,
+            quantity_change INTEGER NOT NULL,
+            previous_stock INTEGER NOT NULL,
+            new_stock INTEGER NOT NULL,
+            reference_type VARCHAR,
+            reference_id INTEGER,
+            reference_number VARCHAR,
+            reason VARCHAR,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_inventory_movements_item ON inventory_movements(item_id)",
+        "CREATE INDEX IF NOT EXISTS idx_inventory_movements_created ON inventory_movements(created_at)",
         "ALTER TABLE customers ADD COLUMN IF NOT EXISTS loyalty_points DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE customers ADD COLUMN IF NOT EXISTS loyalty_tier VARCHAR DEFAULT 'Regular'",
         "ALTER TABLE customers ADD COLUMN IF NOT EXISTS loyalty_member_since TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
@@ -217,6 +249,33 @@ def to_float(value: Any) -> float:
         return float(value or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def add_inventory_movement(
+    db: Session,
+    item_id: int,
+    movement_type: str,
+    quantity_change: int,
+    previous_stock: int,
+    new_stock: int,
+    reference_type: str | None = None,
+    reference_id: int | None = None,
+    reference_number: str | None = None,
+    reason: str | None = None,
+):
+    row = models.InventoryMovement(
+        item_id=item_id,
+        movement_type=movement_type,
+        quantity_change=int(quantity_change),
+        previous_stock=int(previous_stock),
+        new_stock=int(new_stock),
+        reference_type=reference_type,
+        reference_id=reference_id,
+        reference_number=reference_number,
+        reason=reason,
+    )
+    db.add(row)
+    return row
 
 
 
@@ -793,6 +852,22 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
 
     for row in sale_items:
         db.add(models.SaleItem(sale_id=sale.id, **row))
+        current_item = db.query(models.Item).filter(models.Item.id == row["item_id"]).first()
+        if current_item:
+            current_stock = int(current_item.stock or 0)
+            qty = int(row["quantity"] or 0)
+            add_inventory_movement(
+                db,
+                item_id=current_item.id,
+                movement_type="SALE",
+                quantity_change=-qty,
+                previous_stock=current_stock + qty,
+                new_stock=current_stock,
+                reference_type="sale",
+                reference_id=sale.id,
+                reference_number=sale.invoice_no,
+                reason=f"Sale {sale.invoice_no}",
+            )
 
     loyalty_points_earned = 0.0
     loyalty_balance = None
@@ -1307,6 +1382,17 @@ def bulk_update_items(
                         reason=reason,
                     )
                 )
+                add_inventory_movement(
+                    db,
+                    item_id=item.id,
+                    movement_type="ADJUSTMENT",
+                    quantity_change=adjustment,
+                    previous_stock=previous_stock,
+                    new_stock=new_stock,
+                    reference_type="bulk_stock_adjustment",
+                    reference_number=f"BULK-{item.id}",
+                    reason=reason,
+                )
 
             changed += 1
 
@@ -1367,6 +1453,17 @@ def create_stock_adjustment(
     )
 
     db.add(history)
+    add_inventory_movement(
+        db,
+        item_id=item.id,
+        movement_type="ADJUSTMENT",
+        quantity_change=adjustment,
+        previous_stock=previous_stock,
+        new_stock=new_stock,
+        reference_type="stock_adjustment",
+        reference_number=f"ADJ-{item.id}",
+        reason=reason,
+    )
     db.commit()
     db.refresh(history)
     db.refresh(item)
@@ -1828,7 +1925,19 @@ def customer_credit_ledger(db: Session = Depends(get_db)):
             sales_query = sales_query.filter(models.Sale.customer_name == customer.customer_name)
 
         credit_sales = sales_query.order_by(models.Sale.bill_date.desc(), models.Sale.id.desc()).all()
-        credit = sum(to_float(s.final_amount) for s in credit_sales)
+        gross_credit = sum(to_float(s.final_amount) for s in credit_sales)
+        credit_sale_ids = [s.id for s in credit_sales]
+        returned_credit = (
+            sum(
+                to_float(r.return_amount)
+                for r in db.query(models.SalesReturn)
+                .filter(models.SalesReturn.sale_id.in_(credit_sale_ids))
+                .all()
+            )
+            if credit_sale_ids
+            else 0.0
+        )
+        credit = max(gross_credit - returned_credit, 0)
         paid = sum(to_float(p.paid_amount) for p in customer.payments)
         outstanding = max(credit - paid, 0)
         latest_purchase = credit_sales[0].bill_date if credit_sales else None
@@ -1883,7 +1992,20 @@ def add_customer_payment(data: schemas.CustomerPaymentCreate, db: Session = Depe
     else:
         sales_query = sales_query.filter(models.Sale.customer_name == customer.customer_name)
 
-    total_credit = sum(to_float(s.final_amount) for s in sales_query.all())
+    credit_sales_for_payment = sales_query.all()
+    total_credit = sum(to_float(s.final_amount) for s in credit_sales_for_payment)
+    credit_sale_ids = [s.id for s in credit_sales_for_payment]
+    returned_credit = (
+        sum(
+            to_float(r.return_amount)
+            for r in db.query(models.SalesReturn)
+            .filter(models.SalesReturn.sale_id.in_(credit_sale_ids))
+            .all()
+        )
+        if credit_sale_ids
+        else 0.0
+    )
+    total_credit = max(total_credit - returned_credit, 0)
     total_paid = sum(to_float(p.paid_amount) for p in customer.payments)
     outstanding = max(total_credit - total_paid, 0)
 
@@ -2277,6 +2399,18 @@ def create_purchase(data: schemas.PurchaseCreate, db: Session = Depends(get_db))
                 reason=f"Purchase {purchase.invoice_number}",
             )
         )
+        add_inventory_movement(
+            db,
+            item_id=item.id,
+            movement_type="PURCHASE",
+            quantity_change=int(line["quantity"]),
+            previous_stock=previous_stock,
+            new_stock=new_stock,
+            reference_type="purchase",
+            reference_id=purchase.id,
+            reference_number=purchase.invoice_number,
+            reason=f"Purchase {purchase.invoice_number}",
+        )
 
     bill = models.DealerBill(
         dealer_id=dealer.id,
@@ -2309,6 +2443,225 @@ def create_purchase(data: schemas.PurchaseCreate, db: Session = Depends(get_db))
         "total_amount": round(total_amount, 2),
         "paid_amount": round(paid_amount, 2),
         "outstanding_amount": round(outstanding, 2),
+    }
+
+
+
+@app.get("/sales/{sale_id}/return-detail")
+def get_sale_return_detail(sale_id: int, db: Session = Depends(get_db)):
+    sale = db.query(models.Sale).filter(models.Sale.id == sale_id).first()
+    if not sale:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    return {
+        "id": sale.id,
+        "invoice_no": sale.invoice_no,
+        "customer_name": sale.customer_name or "Walk-in Customer",
+        "customer_mobile": sale.customer_mobile,
+        "bill_date": sale.bill_date.strftime("%Y-%m-%d") if sale.bill_date else None,
+        "payment_mode": sale.payment_mode,
+        "final_amount": round(to_float(sale.final_amount), 2),
+        "items": [
+            {
+                "id": row.id,
+                "item_id": row.item_id,
+                "item_name": row.item_name,
+                "quantity": int(row.quantity or 0),
+                "returned_quantity": int(getattr(row, "returned_quantity", 0) or 0),
+                "available_to_return": max(
+                    int(row.quantity or 0) - int(getattr(row, "returned_quantity", 0) or 0),
+                    0,
+                ),
+                "rate": round(to_float(row.rate), 2),
+                "gst_percent": round(to_float(row.gst_percent), 2),
+                "amount": round(to_float(row.amount), 2),
+            }
+            for row in sale.items
+        ],
+    }
+
+
+@app.post("/sales-returns")
+def create_sales_return(data: schemas.SalesReturnCreate, db: Session = Depends(get_db)):
+    sale_item = (
+        db.query(models.SaleItem)
+        .filter(models.SaleItem.id == data.sale_item_id)
+        .first()
+    )
+    if not sale_item:
+        raise HTTPException(status_code=404, detail="Sale item not found")
+
+    sale = sale_item.sale
+    item = db.query(models.Item).filter(models.Item.id == sale_item.item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Inventory item not found")
+
+    quantity = int(data.quantity or 0)
+    returned = int(getattr(sale_item, "returned_quantity", 0) or 0)
+    available = max(int(sale_item.quantity or 0) - returned, 0)
+
+    if quantity <= 0:
+        raise HTTPException(status_code=400, detail="Return quantity must be greater than zero")
+    if quantity > available:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only {available} unit(s) are available to return",
+        )
+
+    reason = str(data.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Return reason is required")
+
+    refund_method = str(data.refund_method or "Cash").strip()
+    if refund_method not in {"Cash", "Online", "Credit Note", "No Refund"}:
+        raise HTTPException(status_code=400, detail="Invalid refund method")
+
+    unit_total = to_float(sale_item.amount) / max(int(sale_item.quantity or 1), 1)
+    gross_invoice_lines = sum(to_float(line.amount) for line in sale.items)
+    invoice_factor = (
+        min(max(to_float(sale.final_amount) / gross_invoice_lines, 0), 1)
+        if gross_invoice_lines > 0
+        else 1
+    )
+    return_amount = unit_total * quantity * invoice_factor
+
+    previous_stock = int(item.stock or 0)
+    new_stock = previous_stock + quantity
+    item.stock = new_stock
+    sale_item.returned_quantity = returned + quantity
+
+    selected_return_date = (
+        datetime.combine(data.return_date, datetime.min.time())
+        if data.return_date
+        else datetime.now()
+    )
+
+    row = models.SalesReturn(
+        sale_id=sale.id,
+        sale_item_id=sale_item.id,
+        item_id=item.id,
+        quantity=quantity,
+        return_amount=return_amount,
+        reason=reason,
+        refund_method=refund_method,
+        return_date=selected_return_date,
+    )
+    db.add(row)
+
+    db.add(
+        models.StockAdjustment(
+            item_id=item.id,
+            previous_stock=previous_stock,
+            adjustment=quantity,
+            new_stock=new_stock,
+            reason=f"Sales return {sale.invoice_no}: {reason}",
+        )
+    )
+    add_inventory_movement(
+        db,
+        item_id=item.id,
+        movement_type="SALES_RETURN",
+        quantity_change=quantity,
+        previous_stock=previous_stock,
+        new_stock=new_stock,
+        reference_type="sales_return",
+        reference_id=sale.id,
+        reference_number=sale.invoice_no,
+        reason=reason,
+    )
+
+    db.commit()
+    db.refresh(row)
+
+    return {
+        "message": "Sales return saved and stock restored successfully",
+        "return_id": row.id,
+        "invoice_no": sale.invoice_no,
+        "return_amount": round(return_amount, 2),
+        "refund_method": refund_method,
+        "new_stock": new_stock,
+    }
+
+
+@app.get("/sales-returns")
+def get_sales_returns(db: Session = Depends(get_db)):
+    rows = (
+        db.query(models.SalesReturn)
+        .order_by(models.SalesReturn.return_date.desc(), models.SalesReturn.id.desc())
+        .all()
+    )
+    return [
+        {
+            "id": row.id,
+            "sale_id": row.sale_id,
+            "invoice_no": row.sale.invoice_no if row.sale else "-",
+            "customer_name": row.sale.customer_name if row.sale and row.sale.customer_name else "Walk-in Customer",
+            "item_id": row.item_id,
+            "item_name": row.sale_item.item_name if row.sale_item else "-",
+            "quantity": row.quantity,
+            "return_amount": round(to_float(row.return_amount), 2),
+            "reason": row.reason,
+            "refund_method": row.refund_method,
+            "return_date": row.return_date.strftime("%Y-%m-%d") if row.return_date else None,
+        }
+        for row in rows
+    ]
+
+
+@app.get("/inventory-movements")
+def get_inventory_movements(
+    item_id: int | None = None,
+    movement_type: str | None = None,
+    db: Session = Depends(get_db),
+):
+    query = db.query(models.InventoryMovement)
+    if item_id:
+        query = query.filter(models.InventoryMovement.item_id == item_id)
+    if movement_type and movement_type != "All":
+        query = query.filter(models.InventoryMovement.movement_type == movement_type)
+
+    rows = (
+        query.order_by(
+            models.InventoryMovement.created_at.desc(),
+            models.InventoryMovement.id.desc(),
+        )
+        .limit(1000)
+        .all()
+    )
+
+    return [
+        {
+            "id": row.id,
+            "item_id": row.item_id,
+            "item_name": row.item.item_name if row.item else "-",
+            "barcode": row.item.barcode if row.item else "",
+            "movement_type": row.movement_type,
+            "quantity_change": row.quantity_change,
+            "previous_stock": row.previous_stock,
+            "new_stock": row.new_stock,
+            "reference_type": row.reference_type,
+            "reference_id": row.reference_id,
+            "reference_number": row.reference_number,
+            "reason": row.reason,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in rows
+    ]
+
+
+@app.get("/returns/dashboard")
+def returns_dashboard(db: Session = Depends(get_db)):
+    sales_returns = db.query(models.SalesReturn).all()
+    purchase_returns = db.query(models.PurchaseReturn).all()
+    adjustments = db.query(models.StockAdjustment).all()
+
+    return {
+        "sales_return_count": len(sales_returns),
+        "sales_return_amount": round(sum(to_float(x.return_amount) for x in sales_returns), 2),
+        "purchase_return_count": len(purchase_returns),
+        "purchase_return_amount": round(sum(to_float(x.return_amount) for x in purchase_returns), 2),
+        "stock_adjustment_count": len(adjustments),
+        "movement_count": db.query(models.InventoryMovement).count(),
     }
 
 
@@ -2390,6 +2743,18 @@ def create_purchase_return(
             new_stock=new_stock,
             reason=f"Purchase return {purchase.invoice_number}",
         )
+    )
+    add_inventory_movement(
+        db,
+        item_id=item.id,
+        movement_type="PURCHASE_RETURN",
+        quantity_change=-quantity,
+        previous_stock=previous_stock,
+        new_stock=new_stock,
+        reference_type="purchase_return",
+        reference_id=purchase.id,
+        reference_number=purchase.invoice_number,
+        reason=data.reason or "Purchase return",
     )
 
     purchase.outstanding_amount = max(

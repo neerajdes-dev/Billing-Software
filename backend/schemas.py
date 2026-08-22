@@ -159,6 +159,14 @@ class PurchaseCreate(BaseModel):
     items: List[PurchaseLineCreate]
 
 
+class SalesReturnCreate(BaseModel):
+    sale_item_id: int
+    quantity: int
+    reason: str
+    refund_method: str = "Cash"
+    return_date: date | None = None
+
+
 class PurchaseReturnCreate(BaseModel):
     purchase_item_id: int
     quantity: int

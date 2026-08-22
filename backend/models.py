@@ -150,6 +150,7 @@ class SaleItem(Base):
     gst_percent = Column(Float)
     amount = Column(Float)
     saving = Column(Float, default=0)
+    returned_quantity = Column(Integer, default=0)
     sale = relationship("Sale", back_populates="items")
 
 class Dealer(Base):
@@ -252,6 +253,41 @@ class PurchaseReturn(Base):
 
     purchase = relationship("Purchase", back_populates="returns")
     purchase_item = relationship("PurchaseItem")
+
+
+class SalesReturn(Base):
+    __tablename__ = "sales_returns"
+    id = Column(Integer, primary_key=True, index=True)
+    sale_id = Column(Integer, ForeignKey("sales.id"), nullable=False)
+    sale_item_id = Column(Integer, ForeignKey("sale_items.id"), nullable=False)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    return_amount = Column(Float, nullable=False, default=0)
+    reason = Column(String, nullable=False)
+    refund_method = Column(String, nullable=False, default="Cash")
+    return_date = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=datetime.now)
+
+    sale = relationship("Sale")
+    sale_item = relationship("SaleItem")
+    item = relationship("Item")
+
+
+class InventoryMovement(Base):
+    __tablename__ = "inventory_movements"
+    id = Column(Integer, primary_key=True, index=True)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
+    movement_type = Column(String, nullable=False)
+    quantity_change = Column(Integer, nullable=False)
+    previous_stock = Column(Integer, nullable=False)
+    new_stock = Column(Integer, nullable=False)
+    reference_type = Column(String)
+    reference_id = Column(Integer)
+    reference_number = Column(String)
+    reason = Column(String)
+    created_at = Column(DateTime, default=datetime.now)
+
+    item = relationship("Item")
 
 
 class Expense(Base):

@@ -13,6 +13,7 @@ import Purchase from "./pages/Purchase";
 import StockReport from "./pages/StockReport";
 import SalesReport from "./pages/SalesReport";
 import Expense from "./pages/Expense";
+import ReturnsInventory from "./pages/ReturnsInventory";
 import Settings from "./pages/Settings";
 
 const Secure = ({ children }) => <ProtectedRoute>{children}</ProtectedRoute>;
@@ -29,6 +30,7 @@ export default function App() {
     <Route path="/stock-report" element={<Secure><StockReport /></Secure>} />
     <Route path="/sales-report" element={<Secure><SalesReport /></Secure>} />
     <Route path="/expense" element={<Secure><Expense /></Secure>} />
+    <Route path="/returns-inventory" element={<Secure><ReturnsInventory /></Secure>} />
     <Route path="/settings" element={<Secure><Settings /></Secure>} />
     <Route path="*" element={<Navigate to="/dashboard" replace />} />
   </Routes></BrowserRouter></ThemeProvider>;

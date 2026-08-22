@@ -15,6 +15,7 @@ import ShoppingCartCheckoutRoundedIcon from "@mui/icons-material/ShoppingCartChe
 import AssessmentRoundedIcon from "@mui/icons-material/AssessmentRounded";
 import PointOfSaleRoundedIcon from "@mui/icons-material/PointOfSaleRounded";
 import PaymentsRoundedIcon from "@mui/icons-material/PaymentsRounded";
+import AssignmentReturnRoundedIcon from "@mui/icons-material/AssignmentReturnRounded";
 import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
 import LogoutRoundedIcon from "@mui/icons-material/LogoutRounded";
 import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
@@ -27,6 +28,7 @@ const menu = [
   ["Items & Stock", "/items", <Inventory2RoundedIcon />],
   ["Suppliers", "/dealers", <LocalShippingRoundedIcon />],
   ["Purchases", "/purchase", <ShoppingCartCheckoutRoundedIcon />],
+  ["Returns & Inventory", "/returns-inventory", <AssignmentReturnRoundedIcon />],
   ["Stock Report", "/stock-report", <AssessmentRoundedIcon />],
   ["Sales Report", "/sales-report", <PointOfSaleRoundedIcon />],
   ["Expenses", "/expense", <PaymentsRoundedIcon />],
