@@ -553,38 +553,88 @@ export default function ReturnsInventory() {
                   Complete history of stock movement with quantity, reference and reason.
                 </Typography>
               </Box>
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                <Autocomplete sx={{ minWidth: 260 }} options={items} value={movementItem}
-                  onChange={(_, value) => setMovementItem(value)}
-                  getOptionLabel={(option) => option.item_name}
-                  renderInput={(params) => <TextField {...params} size="small" label="Filter Product" />} />
-                <TextField select size="small" label="Movement Type" value={movementType}
-                  onChange={(e) => setMovementType(e.target.value)} sx={{ minWidth: 180 }}>
-                  {["All","SALE","PURCHASE","SALES_RETURN","PURCHASE_RETURN","ADJUSTMENT"].map((x) =>
-                    <MenuItem key={x} value={x}>{x.replaceAll("_"," ")}</MenuItem>
-                  )}
-                </TextField>
-                <Button variant="contained" onClick={refreshMovements}>Apply Filters</Button>
-                <Button variant="outlined" startIcon={<RefreshRoundedIcon />} onClick={refreshMovements}>Refresh</Button>
-                <Button
-                  variant="text"
-                  onClick={async () => {
-                    setMovementItem(null);
-                    setMovementType("All");
-                    try {
-                      setLoading(true);
-                      const rows = await getInventoryMovements("", "All");
-                      setMovements(Array.isArray(rows) ? rows : []);
-                    } catch (error) {
-                      setMessage({ type: "error", text: error.message });
-                    } finally {
-                      setLoading(false);
-                    }
-                  }}
-                >
-                  Clear
-                </Button>
-              </Stack>
+              <Grid
+                container
+                spacing={1.25}
+                alignItems="center"
+                sx={{ width: { xs: "100%", lg: 760 } }}
+              >
+                <Grid size={{ xs: 12, sm: 6, lg: 4 }}>
+                  <Autocomplete
+                    fullWidth
+                    options={items}
+                    value={movementItem}
+                    onChange={(_, value) => setMovementItem(value)}
+                    getOptionLabel={(option) => option.item_name}
+                    renderInput={(params) => (
+                      <TextField {...params} size="small" label="Filter Product" />
+                    )}
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
+                  <TextField
+                    select
+                    fullWidth
+                    size="small"
+                    label="Movement Type"
+                    value={movementType}
+                    onChange={(e) => setMovementType(e.target.value)}
+                  >
+                    {["All","SALE","PURCHASE","SALES_RETURN","PURCHASE_RETURN","ADJUSTMENT"].map((x) => (
+                      <MenuItem key={x} value={x}>
+                        {x.replaceAll("_", " ")}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 4, lg: 2 }}>
+                  <Button
+                    fullWidth
+                    variant="contained"
+                    onClick={refreshMovements}
+                    sx={{ whiteSpace: "nowrap", minWidth: 125 }}
+                  >
+                    Apply Filters
+                  </Button>
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 4, lg: 2 }}>
+                  <Button
+                    fullWidth
+                    variant="outlined"
+                    startIcon={<RefreshRoundedIcon />}
+                    onClick={refreshMovements}
+                    sx={{ whiteSpace: "nowrap", minWidth: 115 }}
+                  >
+                    Refresh
+                  </Button>
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 4, lg: 1 }}>
+                  <Button
+                    fullWidth
+                    variant="text"
+                    sx={{ whiteSpace: "nowrap", minWidth: 75 }}
+                    onClick={async () => {
+                      setMovementItem(null);
+                      setMovementType("All");
+                      try {
+                        setLoading(true);
+                        const rows = await getInventoryMovements("", "All");
+                        setMovements(Array.isArray(rows) ? rows : []);
+                      } catch (error) {
+                        setMessage({ type: "error", text: error.message });
+                      } finally {
+                        setLoading(false);
+                      }
+                    }}
+                  >
+                    Clear
+                  </Button>
+                </Grid>
+              </Grid>
             </Stack>
             <TableContainer component={Paper} variant="outlined">
               <Table size="small">
