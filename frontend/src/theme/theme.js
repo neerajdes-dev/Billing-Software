@@ -73,7 +73,7 @@ const theme = createTheme({
     },
 
     /*
-     * Sprint 4 global action-button system.
+     * Global action-button system.
      *
      * Medium is used for page-level actions:
      * Add / Import / Export / Print / Refresh / Save.

@@ -390,7 +390,7 @@ export const extractPurchaseBill = async (file) => {
 };
 
 
-// Sprint 10 — Returns & Inventory Control
+// Returns & Inventory Control
 export const getSaleReturnDetail = (saleId) =>
   request(`/sales/${saleId}/return-detail`);
 

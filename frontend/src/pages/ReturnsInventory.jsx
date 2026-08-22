@@ -550,7 +550,7 @@ export default function ReturnsInventory() {
               <Box>
                 <Typography variant="h6" fontWeight={900}>Inventory Movement Ledger</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Every Sprint 10 stock event is recorded with before/after quantity and source reference.
+                  Complete history of stock movement with quantity, reference and reason.
                 </Typography>
               </Box>
               <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
@@ -564,7 +564,26 @@ export default function ReturnsInventory() {
                     <MenuItem key={x} value={x}>{x.replaceAll("_"," ")}</MenuItem>
                   )}
                 </TextField>
-                <Button variant="outlined" startIcon={<RefreshRoundedIcon />} onClick={refreshMovements}>Apply</Button>
+                <Button variant="contained" onClick={refreshMovements}>Apply Filters</Button>
+                <Button variant="outlined" startIcon={<RefreshRoundedIcon />} onClick={refreshMovements}>Refresh</Button>
+                <Button
+                  variant="text"
+                  onClick={async () => {
+                    setMovementItem(null);
+                    setMovementType("All");
+                    try {
+                      setLoading(true);
+                      const rows = await getInventoryMovements("", "All");
+                      setMovements(Array.isArray(rows) ? rows : []);
+                    } catch (error) {
+                      setMessage({ type: "error", text: error.message });
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                >
+                  Clear
+                </Button>
               </Stack>
             </Stack>
             <TableContainer component={Paper} variant="outlined">
