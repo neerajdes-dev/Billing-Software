@@ -48,7 +48,16 @@ export default function AppLayout({ children }) {
   const logout = () => { localStorage.removeItem("user"); navigate("/", { replace: true }); };
 
   const drawer = (
-    <Box sx={{ height: "100%", display: "flex", flexDirection: "column", bgcolor: "#0B1220", color: "white" }}>
+    <Box
+      sx={{
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        bgcolor: "#0B1220",
+        color: "white",
+        overflow: "hidden",
+      }}
+    >
       <Stack direction="row" spacing={1.5} alignItems="center" sx={{ px: 2.5, py: 2.4 }}>
         <Box sx={{ width: 42, height: 42, borderRadius: 2.5, display: "grid", placeItems: "center", bgcolor: "#2563EB", fontWeight: 900 }}>R</Box>
         <Box>
@@ -58,7 +67,18 @@ export default function AppLayout({ children }) {
       </Stack>
       <Divider sx={{ borderColor: "rgba(148,163,184,.16)" }} />
       <Typography variant="overline" sx={{ color: "#64748B", px: 2.5, pt: 2.3, pb: 1, fontWeight: 800, letterSpacing: 1.2 }}>Workspace</Typography>
-      <List sx={{ px: 1.4, pt: 0, flex: 1 }}>
+      <List
+        sx={{
+          px: 1.4,
+          pt: 0,
+          pb: 1.5,
+          flex: 1,
+          minHeight: 0,
+          overflowY: "auto",
+          overflowX: "hidden",
+          scrollbarWidth: "thin",
+        }}
+      >
         {menu.map(([label, path, icon]) => (
           <ListItemButton key={path} component={NavLink} to={path} onClick={() => setMobileOpen(false)}
             sx={{ mb: .55, minHeight: 46, borderRadius: 2.2, color: "#A8B3C7", '& .MuiListItemIcon-root': { color: "inherit", minWidth: 40 }, '&.active': { color: "white", bgcolor: "#2563EB", boxShadow: "0 8px 22px rgba(37,99,235,.30)" }, '&:hover': { color: "white", bgcolor: "rgba(255,255,255,.07)" } }}>
@@ -66,10 +86,28 @@ export default function AppLayout({ children }) {
           </ListItemButton>
         ))}
       </List>
-      <Box sx={{ p: 1.5 }}>
-        <Box sx={{ p: 1.5, borderRadius: 2.5, bgcolor: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.08)" }}>
-          <Typography fontSize={13} fontWeight={700} noWrap>{user.business_name || "Your Business"}</Typography>
-          <Typography variant="caption" sx={{ color: "#94A3B8" }} noWrap>{user.user_id || "Administrator"}</Typography>
+      <Box
+        sx={{
+          p: 1.5,
+          flexShrink: 0,
+          bgcolor: "#0B1220",
+          borderTop: "1px solid rgba(148,163,184,.12)",
+        }}
+      >
+        <Box
+          sx={{
+            p: 1.5,
+            borderRadius: 2.5,
+            bgcolor: "rgba(255,255,255,.05)",
+            border: "1px solid rgba(255,255,255,.08)",
+          }}
+        >
+          <Typography fontSize={13} fontWeight={700} noWrap>
+            {user.business_name || "Your Business"}
+          </Typography>
+          <Typography variant="caption" sx={{ color: "#94A3B8" }} noWrap>
+            {user.user_id || "Administrator"}
+          </Typography>
         </Box>
       </Box>
     </Box>
@@ -78,7 +116,17 @@ export default function AppLayout({ children }) {
   return (
     <Box sx={{ display: "flex", minHeight: "100vh" }}>
       <Drawer variant={desktop ? "permanent" : "temporary"} open={desktop || mobileOpen} onClose={() => setMobileOpen(false)}
-        ModalProps={{ keepMounted: true }} sx={{ width: desktop ? drawerWidth : 0, flexShrink: 0, '& .MuiDrawer-paper': { width: drawerWidth, border: 0 } }}>
+        ModalProps={{ keepMounted: true }} sx={{
+          width: desktop ? drawerWidth : 0,
+          flexShrink: 0,
+          "& .MuiDrawer-paper": {
+            width: drawerWidth,
+            border: 0,
+            height: "100dvh",
+            overflow: "hidden",
+            bgcolor: "#0B1220",
+          },
+        }}>
         {drawer}
       </Drawer>
       <Box sx={{ flex: 1, minWidth: 0, ml: desktop ? 0 : 0 }}>
