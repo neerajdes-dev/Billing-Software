@@ -8,7 +8,10 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Divider,
+  Drawer,
   Grid,
+  IconButton,
   InputAdornment,
   MenuItem,
   Stack,
@@ -30,9 +33,14 @@ import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import FileDownloadRoundedIcon from "@mui/icons-material/FileDownloadRounded";
 import PrintRoundedIcon from "@mui/icons-material/PrintRounded";
+import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
+import ChevronRightRoundedIcon from "@mui/icons-material/ChevronRightRounded";
 import AppLayout from "../components/AppLayout";
 import PageHeader from "../components/PageHeader";
-import { getSalesReport } from "../services/api";
+import {
+  getSaleReturnDetail,
+  getSalesReport,
+} from "../services/api";
 
 const money = (value) =>
   new Intl.NumberFormat("en-IN", {
@@ -111,6 +119,9 @@ export default function SalesReport() {
     text: "",
   });
   const [loading, setLoading] = useState(false);
+  const [invoiceDrawerOpen, setInvoiceDrawerOpen] = useState(false);
+  const [invoiceLoading, setInvoiceLoading] = useState(false);
+  const [invoiceDetail, setInvoiceDetail] = useState(null);
 
   const load = async (customFilters = filters) => {
     try {
@@ -204,6 +215,134 @@ export default function SalesReport() {
     }),
     [filteredSales]
   );
+
+  const openInvoiceDrawer = async (sale) => {
+    if (!sale?.id) return;
+
+    try {
+      setInvoiceDrawerOpen(true);
+      setInvoiceLoading(true);
+      setInvoiceDetail(null);
+
+      const detail = await getSaleReturnDetail(sale.id);
+      setInvoiceDetail(detail || null);
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text:
+          error.message ||
+          "Unable to load invoice details.",
+      });
+      setInvoiceDrawerOpen(false);
+    } finally {
+      setInvoiceLoading(false);
+    }
+  };
+
+  const printInvoiceDetail = () => {
+    if (!invoiceDetail) return;
+
+    const businessName =
+      JSON.parse(localStorage.getItem("user") || "{}")
+        ?.business_name || "Business";
+
+    const itemRows = (invoiceDetail.items || [])
+      .map(
+        (item) => `
+          <tr>
+            <td>${escapeHtml(item.item_name || "—")}</td>
+            <td class="num">${escapeHtml(item.quantity || 0)}</td>
+            <td class="num">${escapeHtml(money(item.rate))}</td>
+            <td class="num">${escapeHtml(
+              Number(item.gst_percent || 0).toFixed(2)
+            )}%</td>
+            <td class="num">${escapeHtml(money(item.amount))}</td>
+          </tr>
+        `
+      )
+      .join("");
+
+    const win = window.open(
+      "",
+      "_blank",
+      "width=900,height=760"
+    );
+
+    if (!win) {
+      setMessage({
+        type: "error",
+        text: "Popup blocked. Please allow popups to print this invoice.",
+      });
+      return;
+    }
+
+    win.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <title>${escapeHtml(invoiceDetail.invoice_no || "Invoice")}</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 28px; color: #111827; }
+            .top { display:flex; justify-content:space-between; gap:20px; margin-bottom:20px; }
+            h1,h2,p { margin:0; }
+            .muted { color:#64748b; font-size:12px; margin-top:4px; }
+            .box { border:1px solid #cbd5e1; border-radius:8px; padding:14px; margin:14px 0; }
+            table { width:100%; border-collapse:collapse; margin-top:14px; }
+            th,td { border-bottom:1px solid #e2e8f0; padding:8px; text-align:left; font-size:12px; }
+            th { background:#f8fafc; }
+            .num { text-align:right; }
+            .total { display:flex; justify-content:flex-end; margin-top:20px; }
+            .total-inner { width:320px; }
+            .row { display:flex; justify-content:space-between; padding:5px 0; }
+            .grand { font-size:18px; font-weight:800; border-top:1px solid #94a3b8; margin-top:6px; padding-top:10px; }
+          </style>
+        </head>
+        <body>
+          <div class="top">
+            <div>
+              <h1>${escapeHtml(businessName)}</h1>
+              <h2>Invoice Details</h2>
+              <div class="muted">${escapeHtml(invoiceDetail.invoice_no || "—")}</div>
+            </div>
+            <div>
+              <strong>${escapeHtml(formatDate(invoiceDetail.bill_date))}</strong>
+              <div class="muted">${escapeHtml(invoiceDetail.payment_mode || "—")}</div>
+            </div>
+          </div>
+
+          <div class="box">
+            <strong>${escapeHtml(invoiceDetail.customer_name || "Walk-in Customer")}</strong>
+            <div class="muted">${escapeHtml(invoiceDetail.customer_mobile || "No mobile")}</div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th class="num">Qty</th>
+                <th class="num">Rate</th>
+                <th class="num">GST</th>
+                <th class="num">Amount</th>
+              </tr>
+            </thead>
+            <tbody>${itemRows}</tbody>
+          </table>
+
+          <div class="total">
+            <div class="total-inner">
+              <div class="row grand">
+                <span>Invoice Total</span>
+                <span>${escapeHtml(money(invoiceDetail.final_amount))}</span>
+              </div>
+            </div>
+          </div>
+
+          <script>window.onload=()=>window.print();</script>
+        </body>
+      </html>
+    `);
+    win.document.close();
+  };
 
   const exportExcel = () => {
     const rows = filteredSales.map((sale) => ({
@@ -731,76 +870,62 @@ export default function SalesReport() {
               </Box>
 
               <Stack
-  direction={{ xs: "column", md: "row" }}
-  spacing={1.25}
-  useFlexGap
-  flexWrap="wrap"
-  alignItems={{ xs: "stretch", md: "center" }}
->
-  <TextField
-    size="small"
-    placeholder="Search invoice or customer"
-    value={search}
-    onChange={(event) =>
-      setSearch(event.target.value)
-    }
-    sx={{
-      width: { xs: "100%", md: 320 },
-      flexShrink: 0,
-    }}
-    slotProps={{
-      input: {
-        startAdornment: (
-          <InputAdornment position="start">
-            <SearchRoundedIcon fontSize="small" />
-          </InputAdornment>
-        ),
-      },
-    }}
-  />
+                direction={{
+                  xs: "column",
+                  sm: "row",
+                }}
+                spacing={1}
+              >
+                <TextField
+                  size="small"
+                  placeholder="Search invoice or customer"
+                  value={search}
+                  onChange={(event) =>
+                    setSearch(event.target.value)
+                  }
+                  sx={{
+                    minWidth: {
+                      sm: 280,
+                    },
+                  }}
+                  slotProps={{
+                    input: {
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <SearchRoundedIcon fontSize="small" />
+                        </InputAdornment>
+                      ),
+                    },
+                  }}
+                />
 
-  <Button
-    variant="outlined"
-    startIcon={<RefreshRoundedIcon />}
-    onClick={() => load()}
-    disabled={loading}
-    sx={{
-      height: 42,
-      minWidth: 120,
-      flexShrink: 0,
-    }}
-  >
-    Refresh
-  </Button>
+                <Button
+                  variant="outlined"
+                  startIcon={<RefreshRoundedIcon />}
+                  onClick={() => load()}
+                  disabled={loading}
+                >
+                  Refresh
+                </Button>
 
-  <Button
-    variant="outlined"
-    startIcon={<FileDownloadRoundedIcon />}
-    onClick={exportExcel}
-    disabled={!filteredSales.length}
-    sx={{
-      height: 42,
-      minWidth: 145,
-      flexShrink: 0,
-    }}
-  >
-    Export Excel
-  </Button>
+                <Button
+                  variant="outlined"
+                  startIcon={<FileDownloadRoundedIcon />}
+                  onClick={exportExcel}
+                  disabled={!filteredSales.length}
+                >
+                  Export Excel
+                </Button>
 
-  <Button
-    variant="outlined"
-    startIcon={<PrintRoundedIcon />}
-    onClick={printReport}
-    disabled={!filteredSales.length}
-    sx={{
-      height: 42,
-      minWidth: 110,
-      flexShrink: 0,
-    }}
-  >
-    Print
-  </Button>
-</Stack>
+                <Button
+                  variant="outlined"
+                  startIcon={<PrintRoundedIcon />}
+                  onClick={printReport}
+                  disabled={!filteredSales.length}
+                >
+                  Print
+                </Button>
+              </Stack>
             </Stack>
 
             <Stack
@@ -870,12 +995,22 @@ export default function SalesReport() {
                     </TableCell>
 
                     <TableCell>
-                      <Typography
-                        fontWeight={800}
-                        color="primary.main"
+                      <Button
+                        variant="text"
+                        size="small"
+                        endIcon={<ChevronRightRoundedIcon fontSize="small" />}
+                        onClick={() => openInvoiceDrawer(sale)}
+                        sx={{
+                          px: 0.5,
+                          minWidth: 0,
+                          justifyContent: "flex-start",
+                          fontWeight: 800,
+                          textTransform: "none",
+                          whiteSpace: "nowrap",
+                        }}
                       >
                         {sale.invoice_no || "—"}
-                      </Typography>
+                      </Button>
                     </TableCell>
 
                     <TableCell>
@@ -973,6 +1108,265 @@ export default function SalesReport() {
           </TableContainer>
         </CardContent>
       </Card>
+
+      <Drawer
+        anchor="right"
+        open={invoiceDrawerOpen}
+        onClose={() => setInvoiceDrawerOpen(false)}
+        PaperProps={{
+          sx: {
+            width: {
+              xs: "100%",
+              sm: 460,
+              md: 520,
+            },
+            maxWidth: "100vw",
+          },
+        }}
+      >
+        <Box
+          sx={{
+            height: "100%",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <Stack
+            direction="row"
+            justifyContent="space-between"
+            alignItems="center"
+            sx={{
+              px: 2.5,
+              py: 2,
+              borderBottom: 1,
+              borderColor: "divider",
+            }}
+          >
+            <Box>
+              <Typography variant="h6" fontWeight={900}>
+                Invoice Details
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Products, totals and return status
+              </Typography>
+            </Box>
+
+            <IconButton
+              onClick={() => setInvoiceDrawerOpen(false)}
+              aria-label="Close invoice details"
+            >
+              <CloseRoundedIcon />
+            </IconButton>
+          </Stack>
+
+          <Box
+            sx={{
+              p: 2.5,
+              overflowY: "auto",
+              flex: 1,
+            }}
+          >
+            {invoiceLoading && (
+              <Stack alignItems="center" spacing={1.5} sx={{ py: 8 }}>
+                <CircularProgress size={32} />
+                <Typography variant="body2" color="text.secondary">
+                  Loading invoice details...
+                </Typography>
+              </Stack>
+            )}
+
+            {!invoiceLoading && invoiceDetail && (
+              <Stack spacing={2.25}>
+                <Paper
+                  variant="outlined"
+                  sx={{ p: 2, borderRadius: 3 }}
+                >
+                  <Typography variant="caption" color="text.secondary">
+                    Invoice
+                  </Typography>
+                  <Typography variant="h6" fontWeight={900}>
+                    {invoiceDetail.invoice_no || "—"}
+                  </Typography>
+
+                  <Stack
+                    direction="row"
+                    justifyContent="space-between"
+                    spacing={2}
+                    sx={{ mt: 1.25 }}
+                  >
+                    <Typography variant="body2">
+                      {formatDate(invoiceDetail.bill_date)}
+                    </Typography>
+
+                    <Chip
+                      size="small"
+                      label={invoiceDetail.payment_mode || "—"}
+                      color={paymentChip(invoiceDetail.payment_mode)}
+                      variant="outlined"
+                    />
+                  </Stack>
+                </Paper>
+
+                <Paper
+                  variant="outlined"
+                  sx={{ p: 2, borderRadius: 3 }}
+                >
+                  <Typography variant="caption" color="text.secondary">
+                    Customer
+                  </Typography>
+                  <Typography fontWeight={850} sx={{ mt: 0.3 }}>
+                    {invoiceDetail.customer_name || "Walk-in Customer"}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {invoiceDetail.customer_mobile || "No mobile number"}
+                  </Typography>
+                </Paper>
+
+                <Box>
+                  <Typography fontWeight={900} sx={{ mb: 1 }}>
+                    Products
+                  </Typography>
+
+                  <Stack spacing={1.25}>
+                    {(invoiceDetail.items || []).map((item) => {
+                      const returned = Number(item.returned_quantity || 0);
+                      const sold = Number(item.quantity || 0);
+                      const net = Math.max(sold - returned, 0);
+
+                      return (
+                        <Paper
+                          key={item.id}
+                          variant="outlined"
+                          sx={{
+                            p: 1.75,
+                            borderRadius: 2.5,
+                          }}
+                        >
+                          <Stack
+                            direction="row"
+                            justifyContent="space-between"
+                            spacing={2}
+                          >
+                            <Box sx={{ minWidth: 0 }}>
+                              <Typography fontWeight={850}>
+                                {item.item_name}
+                              </Typography>
+                              <Typography
+                                variant="body2"
+                                color="text.secondary"
+                                sx={{ mt: 0.4 }}
+                              >
+                                {sold} × {money(item.rate)}
+                                {" · "}GST {Number(item.gst_percent || 0).toFixed(2)}%
+                              </Typography>
+                            </Box>
+
+                            <Typography fontWeight={900} whiteSpace="nowrap">
+                              {money(item.amount)}
+                            </Typography>
+                          </Stack>
+
+                          {returned > 0 && (
+                            <>
+                              <Divider sx={{ my: 1.25 }} />
+                              <Stack
+                                direction="row"
+                                spacing={1}
+                                flexWrap="wrap"
+                                useFlexGap
+                              >
+                                <Chip
+                                  size="small"
+                                  color="warning"
+                                  variant="outlined"
+                                  label={`Sold ${sold}`}
+                                />
+                                <Chip
+                                  size="small"
+                                  color="error"
+                                  variant="outlined"
+                                  label={`Returned ${returned}`}
+                                />
+                                <Chip
+                                  size="small"
+                                  color="success"
+                                  variant="outlined"
+                                  label={`Net ${net}`}
+                                />
+                              </Stack>
+                            </>
+                          )}
+                        </Paper>
+                      );
+                    })}
+
+                    {!invoiceDetail.items?.length && (
+                      <Alert severity="info">
+                        No product lines found for this invoice.
+                      </Alert>
+                    )}
+                  </Stack>
+                </Box>
+
+                <Paper
+                  sx={{
+                    p: 2,
+                    borderRadius: 3,
+                    bgcolor: "grey.50",
+                  }}
+                >
+                  <Stack spacing={1}>
+                    <Stack direction="row" justifyContent="space-between">
+                      <Typography color="text.secondary">
+                        Invoice Total
+                      </Typography>
+                      <Typography fontWeight={900}>
+                        {money(invoiceDetail.final_amount)}
+                      </Typography>
+                    </Stack>
+                  </Stack>
+                </Paper>
+
+                <Alert severity="info">
+                  Invoice records are view-only here. Corrections should use
+                  Sales Return or controlled inventory adjustments so stock and
+                  audit history stay accurate.
+                </Alert>
+              </Stack>
+            )}
+          </Box>
+
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              p: 2,
+              borderTop: 1,
+              borderColor: "divider",
+              bgcolor: "background.paper",
+            }}
+          >
+            <Button
+              fullWidth
+              variant="outlined"
+              onClick={() => setInvoiceDrawerOpen(false)}
+            >
+              Close
+            </Button>
+
+            <Button
+              fullWidth
+              variant="contained"
+              startIcon={<PrintRoundedIcon />}
+              onClick={printInvoiceDetail}
+              disabled={!invoiceDetail || invoiceLoading}
+            >
+              Print Invoice
+            </Button>
+          </Stack>
+        </Box>
+      </Drawer>
+
     </AppLayout>
   );
 }
