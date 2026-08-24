@@ -14,6 +14,7 @@ import {
   IconButton,
   InputAdornment,
   MenuItem,
+  Paper,
   Stack,
   Table,
   TableBody,
@@ -869,63 +870,84 @@ export default function SalesReport() {
                 </Typography>
               </Box>
 
-              <Stack
-                direction={{
-                  xs: "column",
-                  sm: "row",
-                }}
+              <Grid
+                container
                 spacing={1}
+                alignItems="center"
+                sx={{
+                  width: { xs: "100%", lg: "auto" },
+                  minWidth: { lg: 700 },
+                }}
               >
-                <TextField
-                  size="small"
-                  placeholder="Search invoice or customer"
-                  value={search}
-                  onChange={(event) =>
-                    setSearch(event.target.value)
-                  }
-                  sx={{
-                    minWidth: {
-                      sm: 280,
-                    },
-                  }}
-                  slotProps={{
-                    input: {
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <SearchRoundedIcon fontSize="small" />
-                        </InputAdornment>
-                      ),
-                    },
-                  }}
-                />
+                <Grid size={{ xs: 12, sm: 12, md: 5 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    placeholder="Search invoice or customer"
+                    value={search}
+                    onChange={(event) =>
+                      setSearch(event.target.value)
+                    }
+                    slotProps={{
+                      input: {
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <SearchRoundedIcon fontSize="small" />
+                          </InputAdornment>
+                        ),
+                      },
+                    }}
+                  />
+                </Grid>
 
-                <Button
-                  variant="outlined"
-                  startIcon={<RefreshRoundedIcon />}
-                  onClick={() => load()}
-                  disabled={loading}
-                >
-                  Refresh
-                </Button>
+                <Grid size={{ xs: 12, sm: 4, md: 2 }}>
+                  <Button
+                    fullWidth
+                    variant="outlined"
+                    startIcon={<RefreshRoundedIcon />}
+                    onClick={() => load()}
+                    disabled={loading}
+                    sx={{
+                      minWidth: 110,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Refresh
+                  </Button>
+                </Grid>
 
-                <Button
-                  variant="outlined"
-                  startIcon={<FileDownloadRoundedIcon />}
-                  onClick={exportExcel}
-                  disabled={!filteredSales.length}
-                >
-                  Export Excel
-                </Button>
+                <Grid size={{ xs: 12, sm: 4, md: 3 }}>
+                  <Button
+                    fullWidth
+                    variant="outlined"
+                    startIcon={<FileDownloadRoundedIcon />}
+                    onClick={exportExcel}
+                    disabled={!filteredSales.length}
+                    sx={{
+                      minWidth: 145,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Export Excel
+                  </Button>
+                </Grid>
 
-                <Button
-                  variant="outlined"
-                  startIcon={<PrintRoundedIcon />}
-                  onClick={printReport}
-                  disabled={!filteredSales.length}
-                >
-                  Print
-                </Button>
-              </Stack>
+                <Grid size={{ xs: 12, sm: 4, md: 2 }}>
+                  <Button
+                    fullWidth
+                    variant="outlined"
+                    startIcon={<PrintRoundedIcon />}
+                    onClick={printReport}
+                    disabled={!filteredSales.length}
+                    sx={{
+                      minWidth: 100,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Print
+                  </Button>
+                </Grid>
+              </Grid>
             </Stack>
 
             <Stack
