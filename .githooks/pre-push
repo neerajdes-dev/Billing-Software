@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Blocks `git push` if backend/requirements.txt can't be installed cleanly.
+#
+# One-time setup per clone:
+#   git config core.hooksPath .githooks
+#
+# Skip once if you really need to (not recommended):
+#   SKIP_REQUIREMENTS_CHECK=1 git push
+set -euo pipefail
+
+if [ "${SKIP_REQUIREMENTS_CHECK:-}" = "1" ]; then
+  echo "pre-push: SKIP_REQUIREMENTS_CHECK=1 set, skipping requirements check."
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+REQ_FILE="$REPO_ROOT/backend/requirements.txt"
+
+if [ ! -f "$REQ_FILE" ]; then
+  echo "pre-push: backend/requirements.txt not found, skipping check."
+  exit 0
+fi
+
+PYTHON_BIN="${PYTHON_BIN:-}"
+if [ -z "$PYTHON_BIN" ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+  elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="python"
+  fi
+fi
+
+if [ -z "$PYTHON_BIN" ]; then
+  echo "pre-push: no Python interpreter found on PATH; skipping requirements check."
+  echo "pre-push: install Python, or set PYTHON_BIN, to enable this check."
+  exit 0
+fi
+
+echo "pre-push: verifying backend/requirements.txt installs cleanly..."
+
+WORK_DIR="$(mktemp -d)"
+TMP_VENV="$WORK_DIR/venv"
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+"$PYTHON_BIN" -m venv "$TMP_VENV"
+
+if [ -f "$TMP_VENV/bin/pip" ]; then
+  PIP_BIN="$TMP_VENV/bin/pip"
+else
+  PIP_BIN="$TMP_VENV/Scripts/pip.exe"
+fi
+
+if ! "$PIP_BIN" install --disable-pip-version-check -q -r "$REQ_FILE"; then
+  echo ""
+  echo "pre-push BLOCKED: backend/requirements.txt failed to install cleanly."
+  echo "Fix the requirements file (bad version pin, conflicting packages, etc.) and try again."
+  echo "(To push anyway just this once: SKIP_REQUIREMENTS_CHECK=1 git push)"
+  exit 1
+fi
+
+echo "pre-push: backend/requirements.txt OK."
+exit 0

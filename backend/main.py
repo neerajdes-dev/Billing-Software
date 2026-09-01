@@ -267,6 +267,14 @@ def get_db():
         db.close()
 
 
+def get_current_user_id(request: Request) -> str:
+    """The user_id from the caller's verified JWT (set by require_authentication)."""
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user_id
+
+
 def generate_invoice_no():
     return "INV-" + datetime.now().strftime("%Y%m%d%H%M%S")
 
@@ -2915,7 +2923,14 @@ def delete_expense(expense_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/settings/{user_id}")
-def get_settings(user_id: str, db: Session = Depends(get_db)):
+def get_settings(
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_id),
+):
+    if user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this account")
+
     user = db.query(models.User).filter(models.User.user_id == user_id).first()
 
     if not user:
@@ -2933,8 +2948,14 @@ def get_settings(user_id: str, db: Session = Depends(get_db)):
 
 @app.put("/settings/{user_id}")
 def update_settings(
-    user_id: str, data: schemas.SettingsUpdate, db: Session = Depends(get_db)
+    user_id: str,
+    data: schemas.SettingsUpdate,
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_id),
 ):
+    if user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this account")
+
     user = db.query(models.User).filter(models.User.user_id == user_id).first()
 
     if not user:
@@ -2953,8 +2974,14 @@ def update_settings(
 
 @app.put("/settings/{user_id}/username")
 def update_username(
-    user_id: str, data: schemas.UsernameUpdate, db: Session = Depends(get_db)
+    user_id: str,
+    data: schemas.UsernameUpdate,
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_id),
 ):
+    if user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this account")
+
     user = db.query(models.User).filter(models.User.user_id == user_id).first()
 
     if not user:
@@ -2975,8 +3002,14 @@ def update_username(
 
 @app.put("/settings/{user_id}/password")
 def update_password(
-    user_id: str, data: schemas.PasswordUpdate, db: Session = Depends(get_db)
+    user_id: str,
+    data: schemas.PasswordUpdate,
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_id),
 ):
+    if user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this account")
+
     user = db.query(models.User).filter(models.User.user_id == user_id).first()
 
     if not user:
