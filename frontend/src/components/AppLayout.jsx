@@ -45,7 +45,7 @@ export default function AppLayout({ children }) {
     try { return JSON.parse(localStorage.getItem("user")) || {}; } catch { return {}; }
   }, []);
   const current = menu.find((x) => location.pathname.startsWith(x[1]))?.[0] || "Billing 24×7";
-  const logout = () => { localStorage.removeItem("user"); navigate("/", { replace: true }); };
+  const logout = () => { localStorage.removeItem("user"); localStorage.removeItem("token"); navigate("/", { replace: true }); };
 
   const drawer = (
     <Box

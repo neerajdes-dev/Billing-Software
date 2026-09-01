@@ -27,6 +27,7 @@ export default function LoginPage() {
       setLoading(true);
       const user = await loginUser({ user_id: form.user_id.trim(), password: form.password });
       localStorage.setItem("user", JSON.stringify(user));
+      if (user.access_token) localStorage.setItem("token", user.access_token);
       navigate("/dashboard", { replace: true });
     } catch (err) {
       setError(err.message || "Login failed");

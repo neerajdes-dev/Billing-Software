@@ -3,6 +3,22 @@ const rawApiUrl =
 
 const API_URL = rawApiUrl.replace(/\/+$/, "");
 
+// Endpoints the backend allows without a logged-in session. Everything else
+// needs the Authorization header attached below.
+const PUBLIC_ENDPOINTS = new Set(["/login", "/signup"]);
+
+function getToken() {
+  return localStorage.getItem("token");
+}
+
+function clearSessionAndRedirectToLogin() {
+  localStorage.removeItem("user");
+  localStorage.removeItem("token");
+  if (window.location.pathname !== "/") {
+    window.location.assign("/");
+  }
+}
+
 function getErrorMessage(payload, status) {
   const detail = payload?.detail;
 
@@ -42,6 +58,7 @@ function getErrorMessage(payload, status) {
 async function request(path, options = {}) {
   const endpoint = path.startsWith("/") ? path : `/${path}`;
   const url = `${API_URL}${endpoint}`;
+  const token = getToken();
 
   let response;
 
@@ -51,6 +68,7 @@ async function request(path, options = {}) {
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(options.headers || {}),
       },
     });
@@ -74,6 +92,10 @@ async function request(path, options = {}) {
   } else {
     const text = await response.text().catch(() => "");
     payload = text ? { message: text } : {};
+  }
+
+  if (response.status === 401 && !PUBLIC_ENDPOINTS.has(endpoint)) {
+    clearSessionAndRedirectToLogin();
   }
 
   if (!response.ok) {
@@ -361,14 +383,20 @@ export const testAIConnection = () =>
 export const extractPurchaseBill = async (file) => {
   const form = new FormData();
   form.append("file", file);
+  const token = getToken();
 
   const response = await fetch(
     `${API_URL}/ai/extract-purchase-bill`,
     {
       method: "POST",
       body: form,
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     }
   );
+
+  if (response.status === 401) {
+    clearSessionAndRedirectToLogin();
+  }
 
   let payload = {};
 

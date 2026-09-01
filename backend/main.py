@@ -2,15 +2,17 @@ import os
 from datetime import datetime, date
 from typing import Any
 
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
+import jwt
+from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from database import Base, engine, SessionLocal
 import models
 import schemas
-from security import hash_password, verify_password
+from security import hash_password, verify_password, create_access_token, decode_access_token
 from ai_service import encrypt_key, decrypt_key, mask_key, extract_bill, test_provider
 
 
@@ -230,6 +232,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Endpoints reachable without a logged-in session. Everything else requires a
+# valid "Authorization: Bearer <token>" header issued by POST /login.
+PUBLIC_PATHS = {"/", "/health", "/signup", "/login", "/docs", "/openapi.json", "/redoc"}
+
+
+@app.middleware("http")
+async def require_authentication(request: Request, call_next):
+    if request.method == "OPTIONS" or request.url.path in PUBLIC_PATHS:
+        return await call_next(request)
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+
+    token = auth_header[len("Bearer "):].strip()
+    try:
+        payload = decode_access_token(token)
+    except jwt.ExpiredSignatureError:
+        return JSONResponse(status_code=401, content={"detail": "Session expired. Please log in again."})
+    except jwt.PyJWTError:
+        return JSONResponse(status_code=401, content={"detail": "Invalid session. Please log in again."})
+
+    request.state.user_id = payload.get("sub")
+    return await call_next(request)
 
 
 def get_db():
@@ -498,12 +525,16 @@ def login(data: schemas.LoginRequest, db: Session = Depends(get_db)):
         user.password = hash_password(data.password)
         db.commit()
 
+    access_token = create_access_token(subject=user.user_id)
+
     return {
         "message": "Login successful",
         "user_id": user.user_id,
         "business_name": user.business_name,
         "email": user.email,
         "mobile": user.mobile,
+        "access_token": access_token,
+        "token_type": "bearer",
     }
 
 
