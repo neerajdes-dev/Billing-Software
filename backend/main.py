@@ -1,5 +1,6 @@
 import os
-from datetime import datetime, date
+from collections import defaultdict
+from datetime import datetime, date, timedelta
 from typing import Any
 
 import jwt
@@ -9,7 +10,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
-from database import Base, engine, SessionLocal
+from database import Base, engine, SessionLocal, current_tenant_id
 import models
 import schemas
 from security import hash_password, verify_password, create_access_token, decode_access_token
@@ -191,19 +192,106 @@ def run_database_migrations():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """,
-        """
-        INSERT INTO loyalty_settings (
-            enabled, earn_amount, points_per_earn_amount, point_value,
-            minimum_redeem_points, max_redeem_percent,
-            silver_threshold, gold_threshold, platinum_threshold
-        )
-        SELECT 1, 100, 1, 1, 10, 20, 10000, 25000, 50000
-        WHERE NOT EXISTS (SELECT 1 FROM loyalty_settings)
-        """,
+        # NOTE: this used to seed one global default loyalty_settings row
+        # here at startup ("INSERT ... WHERE NOT EXISTS"). Removed now that
+        # loyalty settings are per-tenant (see the owner_id backfill below)
+        # -- there is no single tenant to own a startup-seeded row, and a
+        # fresh account gets its own default row lazily on first use via
+        # get_loyalty_settings()'s get-or-create logic instead.
 
         "ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS mrp DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS saving DOUBLE PRECISION DEFAULT 0",
     ]
+
+    # --- Multi-tenancy: owner_id backfill -----------------------------------
+    #
+    # Every business-data table gets an owner_id column identifying which
+    # account's data the row is. All pre-existing rows (from back when this
+    # app only ever supported a single business account) are assigned to
+    # whichever account was created first -- correct because the app has
+    # only ever operated single-tenant up to this point. This UPDATE only
+    # ever touches rows left with a NULL owner_id, so it becomes a
+    # permanent no-op the moment every row has one; new rows always get
+    # owner_id set explicitly by the API at creation time, never here.
+    tenant_scoped_tables = [
+        "customers", "customer_payments", "loyalty_settings", "loyalty_transactions",
+        "items", "stock_adjustments", "sales", "sale_items", "dealers", "dealer_bills",
+        "dealer_payments", "purchases", "purchase_items", "purchase_returns",
+        "sales_returns", "inventory_movements", "expenses", "ai_settings",
+    ]
+    # These hold exactly one settings row per tenant (previously one row
+    # total, app-wide).
+    per_tenant_singleton_tables = {"loyalty_settings", "ai_settings"}
+
+    for table in tenant_scoped_tables:
+        migration_statements.append(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS owner_id INTEGER")
+        migration_statements.append(
+            f"UPDATE {table} SET owner_id = (SELECT id FROM users ORDER BY id ASC LIMIT 1) "
+            f"WHERE owner_id IS NULL"
+        )
+        # No-op (no error) if the column is already NOT NULL -- safe to run
+        # on every startup, not just the first time.
+        migration_statements.append(f"ALTER TABLE {table} ALTER COLUMN owner_id SET NOT NULL")
+        migration_statements.append(
+            f"CREATE INDEX IF NOT EXISTS ix_{table}_owner_id ON {table}(owner_id)"
+        )
+        if table in per_tenant_singleton_tables:
+            migration_statements.append(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS ux_{table}_owner_id ON {table}(owner_id)"
+            )
+
+    # --- Per-tenant uniqueness for barcode / invoice numbers ----------------
+    #
+    # Item.barcode and Sale.invoice_no used to be globally unique columns.
+    # Two different businesses can legitimately reuse the same barcode or
+    # invoice numbering scheme, so uniqueness now needs to be scoped to
+    # (owner_id, value) instead of the whole table. SQLAlchemy's old
+    # `unique=True, index=True` column definitions emit a bare
+    # CREATE UNIQUE INDEX (not a named table CONSTRAINT), so this looks the
+    # existing unique object up via Postgres's own catalogs (pg_indexes /
+    # pg_constraint) rather than assuming a specific name or relying on
+    # information_schema, which does not list plain unique indexes at all.
+    for table, column in (("items", "barcode"), ("sales", "invoice_no")):
+        # A named UNIQUE CONSTRAINT (e.g. from `barcode VARCHAR UNIQUE`) owns
+        # its backing index -- dropping the index directly while the
+        # constraint still exists fails with a "DependentObjectsStillExist"
+        # error. So: drop the constraint first (which drops its index too),
+        # and only look for a bare, constraint-less unique index afterward
+        # (the shape SQLAlchemy's `unique=True, index=True` combination
+        # actually emits, per the old Item.barcode / Sale.invoice_no column
+        # definitions this app used before multi-tenancy).
+        migration_statements.append(
+            f"""
+            DO $$
+            DECLARE
+                con_name text;
+                idx_name text;
+            BEGIN
+                SELECT conname INTO con_name
+                FROM pg_constraint c
+                JOIN pg_class t ON t.oid = c.conrelid
+                JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey)
+                WHERE t.relname = '{table}' AND c.contype = 'u' AND a.attname = '{column}'
+                LIMIT 1;
+                IF con_name IS NOT NULL THEN
+                    EXECUTE format('ALTER TABLE {table} DROP CONSTRAINT %I', con_name);
+                END IF;
+
+                SELECT indexname INTO idx_name
+                FROM pg_indexes
+                WHERE tablename = '{table}'
+                  AND indexdef ILIKE '%UNIQUE%'
+                  AND indexdef ~ '\\({column}\\)'
+                LIMIT 1;
+                IF idx_name IS NOT NULL THEN
+                    EXECUTE format('DROP INDEX IF EXISTS %I', idx_name);
+                END IF;
+            END $$;
+            """
+        )
+        migration_statements.append(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS ux_{table}_owner_{column} ON {table}(owner_id, {column})"
+        )
 
     with engine.begin() as connection:
         for statement in migration_statements:
@@ -256,7 +344,35 @@ async def require_authentication(request: Request, call_next):
         return JSONResponse(status_code=401, content={"detail": "Invalid session. Please log in again."})
 
     request.state.user_id = payload.get("sub")
-    return await call_next(request)
+
+    # Resolve the JWT's username subject to the account's immutable numeric
+    # id, and set it as the current tenant for the lifetime of this request.
+    # Every ORM query issued from here on (via database.py's do_orm_execute
+    # listener) is automatically scoped to this tenant's own rows. We look
+    # this up on every request rather than trusting a stale numeric id
+    # embedded in an old token, and rather than keying tenancy on the
+    # username itself, which the account holder can change (see
+    # PUT /settings/{user_id}/username) -- an immutable key avoids a
+    # rename silently orphaning or hiding that tenant's own data.
+    db_for_lookup = SessionLocal()
+    try:
+        account = (
+            db_for_lookup.query(models.User)
+            .filter(models.User.user_id == request.state.user_id)
+            .first()
+        )
+    finally:
+        db_for_lookup.close()
+
+    if account is None:
+        return JSONResponse(status_code=401, content={"detail": "Invalid session. Please log in again."})
+
+    request.state.owner_id = account.id
+    token = current_tenant_id.set(account.id)
+    try:
+        return await call_next(request)
+    finally:
+        current_tenant_id.reset(token)
 
 
 def get_db():
@@ -268,11 +384,24 @@ def get_db():
 
 
 def get_current_user_id(request: Request) -> str:
-    """The user_id from the caller's verified JWT (set by require_authentication)."""
+    """The user_id (login username) from the caller's verified JWT (set by
+    require_authentication). Used only by the /settings/{user_id} endpoints,
+    which compare it against a URL path parameter -- unrelated to the
+    owner_id-based tenant scoping used everywhere else."""
     user_id = getattr(request.state, "user_id", None)
     if not user_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return user_id
+
+
+def get_current_owner_id(request: Request) -> int:
+    """The authenticated account's immutable numeric id -- the value every
+    new row's owner_id must be set to. Never derive this from request-body
+    data; it always comes from the verified JWT via the auth middleware."""
+    owner_id = getattr(request.state, "owner_id", None)
+    if not owner_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return owner_id
 
 
 def generate_invoice_no():
@@ -288,6 +417,7 @@ def to_float(value: Any) -> float:
 
 def add_inventory_movement(
     db: Session,
+    owner_id: int,
     item_id: int,
     movement_type: str,
     quantity_change: int,
@@ -299,6 +429,7 @@ def add_inventory_movement(
     reason: str | None = None,
 ):
     row = models.InventoryMovement(
+        owner_id=owner_id,
         item_id=item_id,
         movement_type=movement_type,
         quantity_change=int(quantity_change),
@@ -315,12 +446,17 @@ def add_inventory_movement(
 
 
 
-def get_loyalty_settings(db: Session):
-    settings = db.query(models.LoyaltySettings).order_by(models.LoyaltySettings.id.asc()).first()
+def get_loyalty_settings(db: Session, owner_id: int):
+    settings = (
+        db.query(models.LoyaltySettings)
+        .filter(models.LoyaltySettings.owner_id == owner_id)
+        .order_by(models.LoyaltySettings.id.asc())
+        .first()
+    )
     if settings:
         return settings
 
-    settings = models.LoyaltySettings()
+    settings = models.LoyaltySettings(owner_id=owner_id)
     db.add(settings)
     db.flush()
     return settings
@@ -521,12 +657,48 @@ def signup(data: schemas.SignupRequest, db: Session = Depends(get_db)):
     }
 
 
+# In-memory brute-force guard for /login. Keyed by user_id (not IP -- Render
+# sits behind a proxy and we don't want to trust a spoofable header for this).
+# NOTE: this resets on every server restart/redeploy and is per-instance, so it
+# is a speed bump against automated guessing, not a durable security control.
+_LOGIN_ATTEMPT_WINDOW = timedelta(minutes=15)
+_LOGIN_MAX_ATTEMPTS = 5
+_failed_login_attempts: dict[str, list[datetime]] = defaultdict(list)
+
+
+def _enforce_login_rate_limit(user_id: str):
+    now = datetime.now()
+    window_start = now - _LOGIN_ATTEMPT_WINDOW
+    attempts = [t for t in _failed_login_attempts[user_id] if t > window_start]
+    _failed_login_attempts[user_id] = attempts
+    if len(attempts) >= _LOGIN_MAX_ATTEMPTS:
+        retry_after = attempts[0] + _LOGIN_ATTEMPT_WINDOW - now
+        minutes = max(1, int(retry_after.total_seconds() // 60) + 1)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed login attempts for this account. Try again in about {minutes} minute(s).",
+        )
+
+
+def _record_failed_login(user_id: str):
+    _failed_login_attempts[user_id].append(datetime.now())
+
+
+def _clear_failed_logins(user_id: str):
+    _failed_login_attempts.pop(user_id, None)
+
+
 @app.post("/login")
 def login(data: schemas.LoginRequest, db: Session = Depends(get_db)):
+    _enforce_login_rate_limit(data.user_id)
+
     user = db.query(models.User).filter(models.User.user_id == data.user_id).first()
 
     if not user or not verify_password(data.password, user.password):
+        _record_failed_login(data.user_id)
         raise HTTPException(status_code=401, detail="Invalid user ID or password")
+
+    _clear_failed_logins(data.user_id)
 
     # Transparently migrate old plaintext passwords after a valid login.
     if not user.password.startswith("pbkdf2_sha256$"):
@@ -547,8 +719,8 @@ def login(data: schemas.LoginRequest, db: Session = Depends(get_db)):
 
 
 @app.post("/customers")
-def add_customer(data: schemas.CustomerCreate, db: Session = Depends(get_db)):
-    customer = models.Customer(**data.dict())
+def add_customer(data: schemas.CustomerCreate, db: Session = Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
+    customer = models.Customer(**data.dict(), owner_id=owner_id)
     db.add(customer)
     db.commit()
     db.refresh(customer)
@@ -561,7 +733,7 @@ def get_customers(db: Session = Depends(get_db)):
 
 
 @app.post("/items")
-def add_item(data: schemas.ItemCreate, db: Session = Depends(get_db)):
+def add_item(data: schemas.ItemCreate, db: Session = Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
     validate_item_values(
         data.item_name,
         data.barcode,
@@ -595,7 +767,7 @@ def add_item(data: schemas.ItemCreate, db: Session = Depends(get_db)):
     )
     item_data["expiry_date"] = normalize_date_value(data.expiry_date)
 
-    item = models.Item(**item_data)
+    item = models.Item(**item_data, owner_id=owner_id)
     db.add(item)
     db.commit()
     db.refresh(item)
@@ -664,7 +836,7 @@ def get_item_by_barcode(barcode: str, db: Session = Depends(get_db)):
 
 
 @app.post("/sales")
-def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
+def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
     subtotal = 0.0
     gst_amount = 0.0
     total_mrp = 0.0
@@ -736,7 +908,7 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
     gross_total = subtotal + gst_amount
     discount_amount = max(0.0, min(to_float(data.discount_amount), gross_total))
 
-    loyalty_settings = get_loyalty_settings(db)
+    loyalty_settings = get_loyalty_settings(db, owner_id)
     loyalty_customer = None
     loyalty_points_redeemed = 0.0
     loyalty_discount = 0.0
@@ -864,6 +1036,7 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
             raise HTTPException(status_code=400, detail="Invalid bill date") from exc
 
     sale = models.Sale(
+        owner_id=owner_id,
         invoice_no=generate_invoice_no(),
         customer_name=data.customer_name,
         customer_mobile=data.customer_mobile,
@@ -890,13 +1063,14 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
     db.flush()
 
     for row in sale_items:
-        db.add(models.SaleItem(sale_id=sale.id, **row))
+        db.add(models.SaleItem(owner_id=sale.owner_id, sale_id=sale.id, **row))
         current_item = db.query(models.Item).filter(models.Item.id == row["item_id"]).first()
         if current_item:
             current_stock = int(current_item.stock or 0)
             qty = int(row["quantity"] or 0)
             add_inventory_movement(
                 db,
+                owner_id=sale.owner_id,
                 item_id=current_item.id,
                 movement_type="SALE",
                 quantity_change=-qty,
@@ -921,6 +1095,7 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
 
             db.add(
                 models.LoyaltyTransaction(
+                    owner_id=sale.owner_id,
                     customer_id=loyalty_customer.id,
                     sale_id=sale.id,
                     transaction_type="Redeemed",
@@ -952,6 +1127,7 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db)):
 
             db.add(
                 models.LoyaltyTransaction(
+                    owner_id=sale.owner_id,
                     customer_id=loyalty_customer.id,
                     sale_id=sale.id,
                     transaction_type="Earned",
@@ -1002,8 +1178,9 @@ def get_sales(db: Session = Depends(get_db)):
 
 
 @app.post("/dealers")
-def add_dealer(data: schemas.DealerCreate, db: Session = Depends(get_db)):
+def add_dealer(data: schemas.DealerCreate, db: Session = Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
     dealer = models.Dealer(
+        owner_id=owner_id,
         dealer_name=data.dealer_name, mobile=data.mobile, email=data.email,
         gst_number=data.gst_number, address=data.address,
         bill_amount=0,
@@ -1043,7 +1220,7 @@ def add_dealer_bill(data: schemas.DealerBillCreate, db: Session = Depends(get_db
     if data.bill_date:
         try: bill_date = datetime.strptime(data.bill_date, "%Y-%m-%d")
         except ValueError as exc: raise HTTPException(status_code=400, detail="Invalid bill date") from exc
-    bill = models.DealerBill(dealer_id=data.dealer_id, bill_number=data.bill_number,
+    bill = models.DealerBill(owner_id=dealer.owner_id, dealer_id=data.dealer_id, bill_number=data.bill_number,
         bill_amount=data.bill_amount, bill_date=bill_date, note=data.note)
     db.add(bill); db.commit(); db.refresh(bill)
     return {"message":"Dealer bill saved", "id":bill.id}
@@ -1099,7 +1276,7 @@ def add_dealer_payment(data: schemas.DealerPaymentCreate, db: Session = Depends(
     if data.payment_date:
         try: payment_date=datetime.strptime(data.payment_date,"%Y-%m-%d")
         except ValueError as exc: raise HTTPException(status_code=400,detail="Invalid payment date") from exc
-    payment=models.DealerPayment(dealer_id=data.dealer_id,paid_amount=data.paid_amount,
+    payment=models.DealerPayment(owner_id=dealer.owner_id,dealer_id=data.dealer_id,paid_amount=data.paid_amount,
       payment_mode=data.payment_mode,payment_date=payment_date,reference=data.reference,note=data.note)
     db.add(payment)
 
@@ -1414,6 +1591,7 @@ def bulk_update_items(
                 item.stock = new_stock
                 db.add(
                     models.StockAdjustment(
+                        owner_id=item.owner_id,
                         item_id=item.id,
                         previous_stock=previous_stock,
                         adjustment=adjustment,
@@ -1423,6 +1601,7 @@ def bulk_update_items(
                 )
                 add_inventory_movement(
                     db,
+                    owner_id=item.owner_id,
                     item_id=item.id,
                     movement_type="ADJUSTMENT",
                     quantity_change=adjustment,
@@ -1484,6 +1663,7 @@ def create_stock_adjustment(
     item.stock = new_stock
 
     history = models.StockAdjustment(
+        owner_id=item.owner_id,
         item_id=item.id,
         previous_stock=previous_stock,
         adjustment=adjustment,
@@ -1494,6 +1674,7 @@ def create_stock_adjustment(
     db.add(history)
     add_inventory_movement(
         db,
+        owner_id=item.owner_id,
         item_id=item.id,
         movement_type="ADJUSTMENT",
         quantity_change=adjustment,
@@ -1650,7 +1831,7 @@ def delete_item(item_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/items/import")
-def import_items(data: schemas.ItemImport, db: Session = Depends(get_db)):
+def import_items(data: schemas.ItemImport, db: Session = Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
     created = 0
     skipped = []
     failed = []
@@ -1694,7 +1875,7 @@ def import_items(data: schemas.ItemImport, db: Session = Depends(get_db)):
                     row.expiry_date
                 )
 
-                db.add(models.Item(**item_data))
+                db.add(models.Item(**item_data, owner_id=owner_id))
                 created += 1
 
             except HTTPException as exc:
@@ -1721,8 +1902,8 @@ def import_items(data: schemas.ItemImport, db: Session = Depends(get_db)):
 
 
 @app.get("/loyalty/settings")
-def read_loyalty_settings(db: Session = Depends(get_db)):
-    settings = get_loyalty_settings(db)
+def read_loyalty_settings(db: Session = Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
+    settings = get_loyalty_settings(db, owner_id)
 
     return {
         "enabled": bool(settings.enabled),
@@ -1741,8 +1922,9 @@ def read_loyalty_settings(db: Session = Depends(get_db)):
 def save_loyalty_settings(
     data: schemas.LoyaltySettingsUpdate,
     db: Session = Depends(get_db),
+    owner_id: int = Depends(get_current_owner_id),
 ):
-    settings = get_loyalty_settings(db)
+    settings = get_loyalty_settings(db, owner_id)
 
     numeric_values = [
         data.earn_amount,
@@ -1791,13 +1973,13 @@ def save_loyalty_settings(
 
 
 @app.get("/customers/{customer_id}/loyalty")
-def customer_loyalty_summary(customer_id: int, db: Session = Depends(get_db)):
+def customer_loyalty_summary(customer_id: int, db: Session = Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
     customer = db.query(models.Customer).filter(models.Customer.id == customer_id).first()
 
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
 
-    settings = get_loyalty_settings(db)
+    settings = get_loyalty_settings(db, owner_id)
     sales = (
         customer_sales_query(db, customer)
         .order_by(models.Sale.bill_date.desc(), models.Sale.id.desc())
@@ -1892,6 +2074,7 @@ def loyalty_adjustment(
 
     db.add(
         models.LoyaltyTransaction(
+            owner_id=customer.owner_id,
             customer_id=customer.id,
             transaction_type="Adjustment",
             points=adjustment,
@@ -1909,9 +2092,9 @@ def loyalty_adjustment(
 
 
 @app.get("/loyalty/dashboard")
-def loyalty_dashboard(db: Session = Depends(get_db)):
+def loyalty_dashboard(db: Session = Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
     customers = db.query(models.Customer).order_by(models.Customer.customer_name.asc()).all()
-    settings = get_loyalty_settings(db)
+    settings = get_loyalty_settings(db, owner_id)
 
     rows = []
 
@@ -1941,11 +2124,11 @@ def loyalty_dashboard(db: Session = Depends(get_db)):
 
 
 @app.get("/customers/credit-ledger")
-def customer_credit_ledger(db: Session = Depends(get_db)):
+def customer_credit_ledger(db: Session = Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
     customers = db.query(models.Customer).order_by(models.Customer.customer_name.asc()).all()
     result = []
 
-    loyalty_settings = get_loyalty_settings(db)
+    loyalty_settings = get_loyalty_settings(db, owner_id)
 
     for customer in customers:
         lifetime_spend = customer_lifetime_spend(db, customer)
@@ -2064,6 +2247,7 @@ def add_customer_payment(data: schemas.CustomerPaymentCreate, db: Session = Depe
             raise HTTPException(status_code=400, detail="Invalid payment date") from exc
 
     payment = models.CustomerPayment(
+        owner_id=customer.owner_id,
         customer_id=data.customer_id,
         paid_amount=data.paid_amount,
         payment_mode=data.payment_mode,
@@ -2111,16 +2295,21 @@ def dealer_payment_history(dealer_id: int, db: Session = Depends(get_db)):
 
 
 
-def _get_ai_settings(db: Session):
-    row=db.query(models.AISettings).order_by(models.AISettings.id.asc()).first()
+def _get_ai_settings(db: Session, owner_id: int):
+    row=(
+        db.query(models.AISettings)
+        .filter(models.AISettings.owner_id == owner_id)
+        .order_by(models.AISettings.id.asc())
+        .first()
+    )
     if not row:
-        row=models.AISettings(enabled=0,provider="openai",model="gpt-5-mini")
+        row=models.AISettings(owner_id=owner_id,enabled=0,provider="openai",model="gpt-5-mini")
         db.add(row); db.commit(); db.refresh(row)
     return row
 
 @app.get("/ai/settings")
-def get_ai_settings(db: Session=Depends(get_db)):
-    row=_get_ai_settings(db)
+def get_ai_settings(db: Session=Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
+    row=_get_ai_settings(db, owner_id)
     key=decrypt_key(row.encrypted_api_key) if row.encrypted_api_key else ""
     return {
         "enabled":bool(row.enabled),"provider":row.provider,"model":row.model or "",
@@ -2129,11 +2318,11 @@ def get_ai_settings(db: Session=Depends(get_db)):
     }
 
 @app.put("/ai/settings")
-def save_ai_settings(data: schemas.AISettingsUpdate, db: Session=Depends(get_db)):
+def save_ai_settings(data: schemas.AISettingsUpdate, db: Session=Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
     provider=(data.provider or "").lower()
     if provider not in {"openai","gemini","claude","ollama"}:
         raise HTTPException(status_code=400,detail="Unsupported AI provider")
-    row=_get_ai_settings(db)
+    row=_get_ai_settings(db, owner_id)
     row.enabled=1 if data.enabled else 0
     row.provider=provider; row.model=data.model or None
     row.base_url=data.base_url or None; row.ollama_mode=data.ollama_mode or "local"
@@ -2143,14 +2332,14 @@ def save_ai_settings(data: schemas.AISettingsUpdate, db: Session=Depends(get_db)
     return {"message":"AI settings saved"}
 
 @app.post("/ai/test")
-def test_ai_connection(db: Session=Depends(get_db)):
-    row=_get_ai_settings(db)
+def test_ai_connection(db: Session=Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
+    row=_get_ai_settings(db, owner_id)
     test_provider(row)
     return {"message":f"{row.provider.title()} connection successful"}
 
 @app.post("/ai/extract-purchase-bill")
-async def ai_extract_purchase_bill(file: UploadFile=File(...), db: Session=Depends(get_db)):
-    row=_get_ai_settings(db)
+async def ai_extract_purchase_bill(file: UploadFile=File(...), db: Session=Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
+    row=_get_ai_settings(db, owner_id)
     if not row.enabled:
         raise HTTPException(status_code=400,detail="AI is disabled. Enable it in Settings → AI.")
     mime=(file.content_type or "").lower()
@@ -2379,6 +2568,7 @@ def create_purchase(data: schemas.PurchaseCreate, db: Session = Depends(get_db))
     purchase_date = datetime.combine(data.purchase_date, datetime.min.time())
 
     purchase = models.Purchase(
+        owner_id=dealer.owner_id,
         dealer_id=dealer.id,
         invoice_number=str(data.invoice_number).strip(),
         purchase_date=purchase_date,
@@ -2405,6 +2595,7 @@ def create_purchase(data: schemas.PurchaseCreate, db: Session = Depends(get_db))
 
         db.add(
             models.PurchaseItem(
+                owner_id=dealer.owner_id,
                 purchase_id=purchase.id,
                 item_id=item.id,
                 item_name=item.item_name,
@@ -2431,6 +2622,7 @@ def create_purchase(data: schemas.PurchaseCreate, db: Session = Depends(get_db))
 
         db.add(
             models.StockAdjustment(
+                owner_id=dealer.owner_id,
                 item_id=item.id,
                 previous_stock=previous_stock,
                 adjustment=int(line["quantity"]),
@@ -2440,6 +2632,7 @@ def create_purchase(data: schemas.PurchaseCreate, db: Session = Depends(get_db))
         )
         add_inventory_movement(
             db,
+            owner_id=dealer.owner_id,
             item_id=item.id,
             movement_type="PURCHASE",
             quantity_change=int(line["quantity"]),
@@ -2452,6 +2645,7 @@ def create_purchase(data: schemas.PurchaseCreate, db: Session = Depends(get_db))
         )
 
     bill = models.DealerBill(
+        owner_id=dealer.owner_id,
         dealer_id=dealer.id,
         bill_number=purchase.invoice_number,
         bill_amount=total_amount,
@@ -2463,6 +2657,7 @@ def create_purchase(data: schemas.PurchaseCreate, db: Session = Depends(get_db))
     if paid_amount > 0:
         db.add(
             models.DealerPayment(
+                owner_id=dealer.owner_id,
                 dealer_id=dealer.id,
                 paid_amount=paid_amount,
                 payment_mode=data.payment_mode or "Cash",
@@ -2576,6 +2771,7 @@ def create_sales_return(data: schemas.SalesReturnCreate, db: Session = Depends(g
     )
 
     row = models.SalesReturn(
+        owner_id=sale.owner_id,
         sale_id=sale.id,
         sale_item_id=sale_item.id,
         item_id=item.id,
@@ -2589,6 +2785,7 @@ def create_sales_return(data: schemas.SalesReturnCreate, db: Session = Depends(g
 
     db.add(
         models.StockAdjustment(
+            owner_id=sale.owner_id,
             item_id=item.id,
             previous_stock=previous_stock,
             adjustment=quantity,
@@ -2598,6 +2795,7 @@ def create_sales_return(data: schemas.SalesReturnCreate, db: Session = Depends(g
     )
     add_inventory_movement(
         db,
+        owner_id=sale.owner_id,
         item_id=item.id,
         movement_type="SALES_RETURN",
         quantity_change=quantity,
@@ -2763,6 +2961,7 @@ def create_purchase_return(
     )
 
     row = models.PurchaseReturn(
+        owner_id=purchase.owner_id,
         purchase_id=purchase.id,
         purchase_item_id=purchase_item.id,
         dealer_id=purchase.dealer_id,
@@ -2776,6 +2975,7 @@ def create_purchase_return(
 
     db.add(
         models.StockAdjustment(
+            owner_id=purchase.owner_id,
             item_id=item.id,
             previous_stock=previous_stock,
             adjustment=-quantity,
@@ -2785,6 +2985,7 @@ def create_purchase_return(
     )
     add_inventory_movement(
         db,
+        owner_id=purchase.owner_id,
         item_id=item.id,
         movement_type="PURCHASE_RETURN",
         quantity_change=-quantity,
@@ -2882,8 +3083,9 @@ def profit_summary(db: Session = Depends(get_db)):
 
 
 @app.post("/expenses")
-def add_expense(data: schemas.ExpenseCreate, db: Session = Depends(get_db)):
+def add_expense(data: schemas.ExpenseCreate, db: Session = Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
     expense = models.Expense(
+        owner_id=owner_id,
         expense_name=data.expense_name,
         category=data.category,
         amount=data.amount,

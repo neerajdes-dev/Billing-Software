@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Date, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime
-from database import Base
+from database import Base, TenantScoped
 
 class User(Base):
     __tablename__ = "users"
@@ -16,7 +16,7 @@ class User(Base):
     address = Column(String)
     created_at = Column(DateTime, default=datetime.now)
 
-class Customer(Base):
+class Customer(Base, TenantScoped):
     __tablename__ = "customers"
     id = Column(Integer, primary_key=True, index=True)
     customer_name = Column(String, nullable=False)
@@ -33,7 +33,7 @@ class Customer(Base):
         cascade="all, delete-orphan",
     )
 
-class CustomerPayment(Base):
+class CustomerPayment(Base, TenantScoped):
     __tablename__ = "customer_payments"
     id = Column(Integer, primary_key=True, index=True)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
@@ -45,7 +45,7 @@ class CustomerPayment(Base):
     customer = relationship("Customer", back_populates="payments")
 
 
-class LoyaltySettings(Base):
+class LoyaltySettings(Base, TenantScoped):
     __tablename__ = "loyalty_settings"
     id = Column(Integer, primary_key=True, index=True)
     enabled = Column(Integer, nullable=False, default=1)
@@ -60,7 +60,7 @@ class LoyaltySettings(Base):
     created_at = Column(DateTime, default=datetime.now)
 
 
-class LoyaltyTransaction(Base):
+class LoyaltyTransaction(Base, TenantScoped):
     __tablename__ = "loyalty_transactions"
     id = Column(Integer, primary_key=True, index=True)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
@@ -73,12 +73,14 @@ class LoyaltyTransaction(Base):
     customer = relationship("Customer", back_populates="loyalty_transactions")
 
 
-class Item(Base):
+class Item(Base, TenantScoped):
     __tablename__ = "items"
 
     id = Column(Integer, primary_key=True, index=True)
     item_name = Column(String, nullable=False)
-    barcode = Column(String, unique=True, nullable=False, index=True)
+    # Uniqueness is per-tenant, enforced via a composite (owner_id, barcode)
+    # unique index created in the migration below, not at the column level.
+    barcode = Column(String, nullable=False, index=True)
     purchase_price = Column(Float, nullable=False, default=0)
     mrp = Column(Float, nullable=False, default=0)
     sale_price = Column(Float, nullable=False, default=0)
@@ -100,7 +102,7 @@ class Item(Base):
     purchase_items = relationship("PurchaseItem", back_populates="item")
 
 
-class StockAdjustment(Base):
+class StockAdjustment(Base, TenantScoped):
     __tablename__ = "stock_adjustments"
     id = Column(Integer, primary_key=True, index=True)
     item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
@@ -111,10 +113,12 @@ class StockAdjustment(Base):
     created_at = Column(DateTime, default=datetime.now)
     item = relationship("Item", back_populates="stock_adjustments")
 
-class Sale(Base):
+class Sale(Base, TenantScoped):
     __tablename__ = "sales"
     id = Column(Integer, primary_key=True, index=True)
-    invoice_no = Column(String, unique=True)
+    # Uniqueness is per-tenant, enforced via a composite (owner_id, invoice_no)
+    # unique index created in the migration below, not at the column level.
+    invoice_no = Column(String, index=True)
     customer_name = Column(String)
     customer_mobile = Column(String)
     subtotal = Column(Float, default=0)
@@ -136,7 +140,7 @@ class Sale(Base):
     bill_date = Column(DateTime, default=datetime.now)
     items = relationship("SaleItem", back_populates="sale", cascade="all, delete-orphan")
 
-class SaleItem(Base):
+class SaleItem(Base, TenantScoped):
     __tablename__ = "sale_items"
     id = Column(Integer, primary_key=True, index=True)
     sale_id = Column(Integer, ForeignKey("sales.id"))
@@ -153,7 +157,7 @@ class SaleItem(Base):
     returned_quantity = Column(Integer, default=0)
     sale = relationship("Sale", back_populates="items")
 
-class Dealer(Base):
+class Dealer(Base, TenantScoped):
     __tablename__ = "dealers"
     id = Column(Integer, primary_key=True, index=True)
     dealer_name = Column(String, nullable=False)
@@ -169,7 +173,7 @@ class Dealer(Base):
     payments = relationship("DealerPayment", back_populates="dealer", cascade="all, delete-orphan")
     purchases = relationship("Purchase", back_populates="dealer", cascade="all, delete-orphan")
 
-class DealerBill(Base):
+class DealerBill(Base, TenantScoped):
     __tablename__ = "dealer_bills"
     id = Column(Integer, primary_key=True, index=True)
     dealer_id = Column(Integer, ForeignKey("dealers.id"), nullable=False)
@@ -180,7 +184,7 @@ class DealerBill(Base):
     created_at = Column(DateTime, default=datetime.now)
     dealer = relationship("Dealer", back_populates="bills")
 
-class DealerPayment(Base):
+class DealerPayment(Base, TenantScoped):
     __tablename__ = "dealer_payments"
     id = Column(Integer, primary_key=True, index=True)
     dealer_id = Column(Integer, ForeignKey("dealers.id"))
@@ -192,7 +196,7 @@ class DealerPayment(Base):
     dealer = relationship("Dealer", back_populates="payments")
 
 
-class Purchase(Base):
+class Purchase(Base, TenantScoped):
     __tablename__ = "purchases"
     id = Column(Integer, primary_key=True, index=True)
     dealer_id = Column(Integer, ForeignKey("dealers.id"), nullable=False)
@@ -215,7 +219,7 @@ class Purchase(Base):
     returns = relationship("PurchaseReturn", back_populates="purchase", cascade="all, delete-orphan")
 
 
-class PurchaseItem(Base):
+class PurchaseItem(Base, TenantScoped):
     __tablename__ = "purchase_items"
     id = Column(Integer, primary_key=True, index=True)
     purchase_id = Column(Integer, ForeignKey("purchases.id"), nullable=False)
@@ -238,7 +242,7 @@ class PurchaseItem(Base):
     item = relationship("Item", back_populates="purchase_items")
 
 
-class PurchaseReturn(Base):
+class PurchaseReturn(Base, TenantScoped):
     __tablename__ = "purchase_returns"
     id = Column(Integer, primary_key=True, index=True)
     purchase_id = Column(Integer, ForeignKey("purchases.id"), nullable=False)
@@ -255,7 +259,7 @@ class PurchaseReturn(Base):
     purchase_item = relationship("PurchaseItem")
 
 
-class SalesReturn(Base):
+class SalesReturn(Base, TenantScoped):
     __tablename__ = "sales_returns"
     id = Column(Integer, primary_key=True, index=True)
     sale_id = Column(Integer, ForeignKey("sales.id"), nullable=False)
@@ -273,7 +277,7 @@ class SalesReturn(Base):
     item = relationship("Item")
 
 
-class InventoryMovement(Base):
+class InventoryMovement(Base, TenantScoped):
     __tablename__ = "inventory_movements"
     id = Column(Integer, primary_key=True, index=True)
     item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
@@ -290,7 +294,7 @@ class InventoryMovement(Base):
     item = relationship("Item")
 
 
-class Expense(Base):
+class Expense(Base, TenantScoped):
     __tablename__ = "expenses"
     id = Column(Integer, primary_key=True, index=True)
     expense_name = Column(String, nullable=False)
@@ -302,7 +306,7 @@ class Expense(Base):
     created_at = Column(DateTime, default=datetime.now)
 
 
-class AISettings(Base):
+class AISettings(Base, TenantScoped):
     __tablename__ = "ai_settings"
     id = Column(Integer, primary_key=True, index=True)
     enabled = Column(Integer, nullable=False, default=0)

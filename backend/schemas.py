@@ -4,6 +4,16 @@ from typing import List
 from pydantic import BaseModel
 from typing import Optional
 
+# STANDING RULE -- multi-tenancy: `owner_id` (the tenant/business-account
+# that a row belongs to, see models.py) must NEVER appear as a field on any
+# schema in this file, not even optionally. Several endpoints in main.py
+# build model rows via `Model(**data.dict())` or a `setattr(model, key,
+# value)` loop over a schema's fields -- if `owner_id` were ever added
+# here, one of those request bodies could set it directly and let a caller
+# create or move data into another tenant's account. owner_id is always
+# set explicitly in main.py from the authenticated request, never from
+# client-supplied data.
+
 class SignupRequest(BaseModel):
     business_name: str
     user_id: str
