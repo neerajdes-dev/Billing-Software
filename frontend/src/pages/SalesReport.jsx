@@ -331,6 +331,30 @@ export default function SalesReport() {
 
           <div class="total">
             <div class="total-inner">
+              <div class="row">
+                <span>Subtotal</span>
+                <span>${escapeHtml(money(invoiceDetail.subtotal))}</span>
+              </div>
+              ${
+                Number(invoiceDetail.discount_amount || 0) > 0
+                  ? `<div class="row">
+                <span>Discount</span>
+                <span>-${escapeHtml(money(invoiceDetail.discount_amount))}</span>
+              </div>`
+                  : ""
+              }
+              ${
+                Number(invoiceDetail.loyalty_discount || 0) > 0
+                  ? `<div class="row">
+                <span>Loyalty Discount</span>
+                <span>-${escapeHtml(money(invoiceDetail.loyalty_discount))}</span>
+              </div>`
+                  : ""
+              }
+              <div class="row">
+                <span>GST</span>
+                <span>${escapeHtml(money(invoiceDetail.gst_amount))}</span>
+              </div>
               <div class="row grand">
                 <span>Invoice Total</span>
                 <span>${escapeHtml(money(invoiceDetail.final_amount))}</span>
@@ -1340,6 +1364,48 @@ export default function SalesReport() {
                   <Stack spacing={1}>
                     <Stack direction="row" justifyContent="space-between">
                       <Typography color="text.secondary">
+                        Subtotal
+                      </Typography>
+                      <Typography>
+                        {money(invoiceDetail.subtotal)}
+                      </Typography>
+                    </Stack>
+
+                    {Number(invoiceDetail.discount_amount || 0) > 0 && (
+                      <Stack direction="row" justifyContent="space-between">
+                        <Typography color="text.secondary">
+                          Discount
+                        </Typography>
+                        <Typography color="error.main">
+                          −{money(invoiceDetail.discount_amount)}
+                        </Typography>
+                      </Stack>
+                    )}
+
+                    {Number(invoiceDetail.loyalty_discount || 0) > 0 && (
+                      <Stack direction="row" justifyContent="space-between">
+                        <Typography color="text.secondary">
+                          Loyalty Discount
+                        </Typography>
+                        <Typography color="error.main">
+                          −{money(invoiceDetail.loyalty_discount)}
+                        </Typography>
+                      </Stack>
+                    )}
+
+                    <Stack direction="row" justifyContent="space-between">
+                      <Typography color="text.secondary">
+                        GST
+                      </Typography>
+                      <Typography>
+                        {money(invoiceDetail.gst_amount)}
+                      </Typography>
+                    </Stack>
+
+                    <Divider sx={{ my: 0.5 }} />
+
+                    <Stack direction="row" justifyContent="space-between">
+                      <Typography fontWeight={900}>
                         Invoice Total
                       </Typography>
                       <Typography fontWeight={900}>

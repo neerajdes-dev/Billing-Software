@@ -2694,6 +2694,10 @@ def get_sale_return_detail(sale_id: int, db: Session = Depends(get_db)):
         "customer_mobile": sale.customer_mobile,
         "bill_date": sale.bill_date.strftime("%Y-%m-%d") if sale.bill_date else None,
         "payment_mode": sale.payment_mode,
+        "subtotal": round(to_float(sale.subtotal), 2),
+        "discount_amount": round(to_float(sale.discount_amount), 2),
+        "loyalty_discount": round(to_float(sale.loyalty_discount), 2),
+        "gst_amount": round(to_float(sale.gst_amount), 2),
         "final_amount": round(to_float(sale.final_amount), 2),
         "items": [
             {
