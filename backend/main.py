@@ -6,7 +6,7 @@ from typing import Any
 import jwt
 from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
@@ -320,6 +320,33 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.options("/{full_path:path}")
+async def cors_preflight_fallback(full_path: str, request: Request):
+    """
+    Explicit safety net for CORS preflight requests.
+
+    CORSMiddleware above is supposed to intercept every OPTIONS preflight
+    request before it ever reaches routing. In production this stopped
+    happening (observed: every OPTIONS request returning a bare 405 with no
+    CORS headers at all, even though allow_origins/allow_methods/allow_headers
+    are all correctly configured) after a routine redeploy pulled in newer
+    fastapi/starlette releases via the unpinned "<1.0" version ranges in
+    requirements.txt. Rather than chase the exact library-version behavior
+    change, this route guarantees a valid preflight response unconditionally,
+    independent of whatever CORSMiddleware does internally.
+    """
+    origin = request.headers.get("origin", "")
+    headers = {
+        "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": request.headers.get("access-control-request-headers", "*"),
+    }
+    if origin in cors_origins:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+    return Response(status_code=200, headers=headers)
+
 
 # Endpoints reachable without a logged-in session. Everything else requires a
 # valid "Authorization: Bearer <token>" header issued by POST /login.
