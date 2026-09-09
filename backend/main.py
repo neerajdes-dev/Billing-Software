@@ -1,4 +1,5 @@
 import os
+import secrets
 from collections import defaultdict
 from datetime import datetime, date, timedelta
 from typing import Any
@@ -293,6 +294,23 @@ def run_database_migrations():
             f"CREATE UNIQUE INDEX IF NOT EXISTS ux_{table}_owner_{column} ON {table}(owner_id, {column})"
         )
 
+    # --- Sprint 7: employee accounts, roles & permissions -------------------
+    # Purely additive: new nullable/defaulted columns plus one backfill of a
+    # brand-new column from a value already present on the same row (no
+    # existing column is dropped, retyped, or reinterpreted).
+    migration_statements.append("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR NOT NULL DEFAULT 'admin'")
+    migration_statements.append("ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_owner_id INTEGER REFERENCES users(id)")
+    migration_statements.append("ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{}'::jsonb")
+    migration_statements.append("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true")
+    migration_statements.append("ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR")
+    migration_statements.append("CREATE INDEX IF NOT EXISTS idx_users_tenant_owner ON users(tenant_owner_id)")
+    migration_statements.append("ALTER TABLE sales ADD COLUMN IF NOT EXISTS created_by_id INTEGER REFERENCES users(id)")
+    # Historically every sale was made by the admin themselves (employee
+    # logins didn't exist before this migration), so backfilling to owner_id
+    # is accurate, not a guess.
+    migration_statements.append("UPDATE sales SET created_by_id = owner_id WHERE created_by_id IS NULL")
+    migration_statements.append("CREATE INDEX IF NOT EXISTS idx_sales_created_by ON sales(created_by_id)")
+
     with engine.begin() as connection:
         for statement in migration_statements:
             connection.execute(text(statement))
@@ -394,8 +412,23 @@ async def require_authentication(request: Request, call_next):
     if account is None:
         return JSONResponse(status_code=401, content={"detail": "Invalid session. Please log in again."})
 
-    request.state.owner_id = account.id
-    token = current_tenant_id.set(account.id)
+    if not account.is_active:
+        return JSONResponse(status_code=401, content={"detail": "This account has been disabled. Contact your business admin."})
+
+    # Sprint 7: an employee's requests are scoped to their admin's business
+    # data, not their own row -- resolve the *effective* tenant id here so
+    # every automatic with_loader_criteria filter downstream (and every new
+    # row an employee creates) uses the business's owner_id, exactly as it
+    # already does for an admin acting on their own account.
+    is_employee = account.role == "employee"
+    effective_owner_id = account.tenant_owner_id if is_employee else account.id
+
+    request.state.account_id = account.id
+    request.state.owner_id = effective_owner_id
+    request.state.role = account.role
+    request.state.permissions = account.permissions or {}
+
+    token = current_tenant_id.set(effective_owner_id)
     try:
         return await call_next(request)
     finally:
@@ -422,13 +455,58 @@ def get_current_user_id(request: Request) -> str:
 
 
 def get_current_owner_id(request: Request) -> int:
-    """The authenticated account's immutable numeric id -- the value every
-    new row's owner_id must be set to. Never derive this from request-body
-    data; it always comes from the verified JWT via the auth middleware."""
+    """The *business's* numeric id -- the value every new row's owner_id
+    must be set to. For an admin this is their own id; for an employee this
+    is resolved to their admin's id by require_authentication. Never derive
+    this from request-body data; it always comes from the verified JWT."""
     owner_id = getattr(request.state, "owner_id", None)
     if not owner_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return owner_id
+
+
+def get_current_user_row_id(request: Request) -> int:
+    """The authenticated login's *own* numeric id -- unlike
+    get_current_owner_id, this is NOT resolved to the admin's id for an
+    employee. Used for Sale.created_by_id, so an employee's own Sales
+    Report can be scoped to invoices they personally created."""
+    account_id = getattr(request.state, "account_id", None)
+    if not account_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return account_id
+
+
+def sales_report_scope(request: Request) -> int | None:
+    """None for an admin (sees the whole business's Sales Report, confirmed
+    behavior). For an employee, their own numeric id -- callers filter
+    Sale.created_by_id by this so an employee only sees invoices they
+    personally created."""
+    if getattr(request.state, "role", "admin") == "admin":
+        return None
+    return getattr(request.state, "account_id", None)
+
+
+def require_admin(request: Request) -> int:
+    """Admin-only endpoints (employee management). Returns the caller's own
+    id, which for an admin is also the business's owner_id."""
+    if getattr(request.state, "role", "admin") != "admin":
+        raise HTTPException(status_code=403, detail="Only the business admin can do this")
+    return get_current_owner_id(request)
+
+
+def require_permission(key: str):
+    """FastAPI dependency factory: admins always pass; an employee passes
+    only if their permissions checklist has this key set true. Backend
+    enforcement, not just a frontend hide -- an employee calling this
+    endpoint directly (bypassing the UI) still gets a real 403."""
+    def _dependency(request: Request):
+        if getattr(request.state, "role", "admin") == "admin":
+            return True
+        permissions = getattr(request.state, "permissions", {}) or {}
+        if not permissions.get(key):
+            raise HTTPException(status_code=403, detail="You don't have access to this section. Ask your admin.")
+        return True
+    return _dependency
 
 
 def generate_invoice_no():
@@ -725,6 +803,9 @@ def login(data: schemas.LoginRequest, db: Session = Depends(get_db)):
         _record_failed_login(data.user_id)
         raise HTTPException(status_code=401, detail="Invalid user ID or password")
 
+    if not user.is_active:
+        raise HTTPException(status_code=401, detail="This account has been disabled. Contact your business admin.")
+
     _clear_failed_logins(data.user_id)
 
     # Transparently migrate old plaintext passwords after a valid login.
@@ -734,10 +815,23 @@ def login(data: schemas.LoginRequest, db: Session = Depends(get_db)):
 
     access_token = create_access_token(subject=user.user_id)
 
+    # For an employee, show the actual business's name (from their admin),
+    # not their own row's business_name column -- an employee row never has
+    # one set. Looked up fresh each login rather than copied at creation
+    # time, so it can't go stale if the admin later renames the business.
+    business_name = user.business_name
+    if user.role == "employee" and user.tenant_owner_id:
+        admin_row = db.query(models.User).filter(models.User.id == user.tenant_owner_id).first()
+        if admin_row:
+            business_name = admin_row.business_name
+
     return {
         "message": "Login successful",
         "user_id": user.user_id,
-        "business_name": user.business_name,
+        "name": user.name,
+        "role": user.role,
+        "permissions": user.permissions or {},
+        "business_name": business_name,
         "email": user.email,
         "mobile": user.mobile,
         "access_token": access_token,
@@ -745,8 +839,132 @@ def login(data: schemas.LoginRequest, db: Session = Depends(get_db)):
     }
 
 
+# --- Sprint 7: employee accounts (Admin-only) -------------------------------
+# An employee is just a `User` row with role="employee" and tenant_owner_id
+# pointing at the admin who created it -- see database.py / models.py for how
+# that resolves to the business's owner_id on every request. None of these
+# endpoints are reachable by an employee themselves (require_admin below).
+
+def _generate_employee_password() -> str:
+    return secrets.token_urlsafe(9)
+
+
+def _employee_response(emp: models.User) -> dict:
+    return {
+        "id": emp.id,
+        "user_id": emp.user_id,
+        "name": emp.name,
+        "is_active": emp.is_active,
+        "permissions": emp.permissions or {},
+        "created_at": emp.created_at.strftime("%Y-%m-%d") if emp.created_at else None,
+    }
+
+
+def _get_owned_employee(db: Session, admin_id: int, employee_id: int) -> models.User:
+    employee = (
+        db.query(models.User)
+        .filter(
+            models.User.id == employee_id,
+            models.User.tenant_owner_id == admin_id,
+            models.User.role == "employee",
+        )
+        .first()
+    )
+    if not employee:
+        # Same principle as the automatic tenant scoping elsewhere: don't
+        # distinguish "doesn't exist" from "belongs to another business".
+        raise HTTPException(status_code=404, detail="Employee not found")
+    return employee
+
+
+@app.post("/employees")
+def create_employee(data: schemas.EmployeeCreate, db: Session = Depends(get_db), admin_id: int = Depends(require_admin)):
+    existing = db.query(models.User).filter(models.User.user_id == data.user_id).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="That username is already taken")
+
+    admin_row = db.query(models.User).filter(models.User.id == admin_id).first()
+    plaintext_password = data.password or _generate_employee_password()
+
+    employee = models.User(
+        business_name=admin_row.business_name,
+        user_id=data.user_id,
+        password=hash_password(plaintext_password),
+        email=f"{data.user_id}@employees.internal",
+        name=data.name,
+        role="employee",
+        tenant_owner_id=admin_id,
+        permissions=data.permissions.dict(),
+        is_active=True,
+    )
+    db.add(employee)
+    db.commit()
+    db.refresh(employee)
+
+    return {
+        "message": "Employee created",
+        "employee": _employee_response(employee),
+        # Shown once. Not stored anywhere in retrievable form -- only a
+        # reset (below) can produce a new one.
+        "password": plaintext_password,
+    }
+
+
+@app.get("/employees")
+def list_employees(db: Session = Depends(get_db), admin_id: int = Depends(require_admin)):
+    employees = (
+        db.query(models.User)
+        .filter(models.User.tenant_owner_id == admin_id, models.User.role == "employee")
+        .order_by(models.User.created_at.desc())
+        .all()
+    )
+    return [_employee_response(e) for e in employees]
+
+
+@app.put("/employees/{employee_id}")
+def update_employee(employee_id: int, data: schemas.EmployeeUpdate, db: Session = Depends(get_db), admin_id: int = Depends(require_admin)):
+    employee = _get_owned_employee(db, admin_id, employee_id)
+    if data.name is not None:
+        employee.name = data.name
+    if data.permissions is not None:
+        employee.permissions = data.permissions.dict()
+    db.commit()
+    db.refresh(employee)
+    return {"message": "Employee updated", "employee": _employee_response(employee)}
+
+
+@app.put("/employees/{employee_id}/reset-password")
+def reset_employee_password(employee_id: int, data: schemas.EmployeePasswordReset, db: Session = Depends(get_db), admin_id: int = Depends(require_admin)):
+    employee = _get_owned_employee(db, admin_id, employee_id)
+    plaintext_password = data.password or _generate_employee_password()
+    employee.password = hash_password(plaintext_password)
+    db.commit()
+    return {"message": "Password reset", "password": plaintext_password}
+
+
+@app.put("/employees/{employee_id}/enable")
+def enable_employee(employee_id: int, db: Session = Depends(get_db), admin_id: int = Depends(require_admin)):
+    employee = _get_owned_employee(db, admin_id, employee_id)
+    employee.is_active = True
+    db.commit()
+    return {"message": "Employee enabled"}
+
+
+@app.put("/employees/{employee_id}/disable")
+def disable_employee(employee_id: int, db: Session = Depends(get_db), admin_id: int = Depends(require_admin)):
+    employee = _get_owned_employee(db, admin_id, employee_id)
+    employee.is_active = False
+    db.commit()
+    return {"message": "Employee disabled"}
+
+
 @app.post("/customers")
-def add_customer(data: schemas.CustomerCreate, db: Session = Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
+def add_customer(
+    data: schemas.CustomerCreate,
+    db: Session = Depends(get_db),
+    owner_id: int = Depends(get_current_owner_id),
+    _perm: bool = Depends(require_permission("credit_customers")),
+):
     customer = models.Customer(**data.dict(), owner_id=owner_id)
     db.add(customer)
     db.commit()
@@ -756,6 +974,10 @@ def add_customer(data: schemas.CustomerCreate, db: Session = Depends(get_db), ow
 
 @app.get("/customers")
 def get_customers(db: Session = Depends(get_db)):
+    # Deliberately not permission-gated: Create Bill needs to look up
+    # existing customers regardless of whether an employee also has the
+    # separate Credit Customers permission (billing-counter lookup, not
+    # credit-ledger management).
     return db.query(models.Customer).order_by(models.Customer.id.desc()).all()
 
 
@@ -863,7 +1085,13 @@ def get_item_by_barcode(barcode: str, db: Session = Depends(get_db)):
 
 
 @app.post("/sales")
-def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
+def create_sale(
+    data: schemas.SaleCreate,
+    db: Session = Depends(get_db),
+    owner_id: int = Depends(get_current_owner_id),
+    created_by_id: int = Depends(get_current_user_row_id),
+    _perm: bool = Depends(require_permission("create_bill")),
+):
     subtotal = 0.0
     gst_amount = 0.0
     total_mrp = 0.0
@@ -1064,6 +1292,7 @@ def create_sale(data: schemas.SaleCreate, db: Session = Depends(get_db), owner_i
 
     sale = models.Sale(
         owner_id=owner_id,
+        created_by_id=created_by_id,
         invoice_no=generate_invoice_no(),
         customer_name=data.customer_name,
         customer_mobile=data.customer_mobile,
@@ -1367,8 +1596,17 @@ def stock_report(db: Session = Depends(get_db)):
 
 
 @app.get("/reports/sales")
-def sales_report(from_date: str | None = None, to_date: str | None = None, payment_mode: str | None = None, db: Session = Depends(get_db)):
+def sales_report(
+    from_date: str | None = None,
+    to_date: str | None = None,
+    payment_mode: str | None = None,
+    db: Session = Depends(get_db),
+    row_scope: int | None = Depends(sales_report_scope),
+    _perm: bool = Depends(require_permission("sales_report")),
+):
     query = db.query(models.Sale)
+    if row_scope is not None:
+        query = query.filter(models.Sale.created_by_id == row_scope)
     try:
         if from_date:
             query = query.filter(models.Sale.bill_date >= datetime.strptime(from_date, "%Y-%m-%d"))
@@ -1400,6 +1638,7 @@ def get_dashboard(
     from_date: str | None = None,
     to_date: str | None = None,
     db: Session = Depends(get_db),
+    _perm: bool = Depends(require_permission("dashboard")),
 ):
     query = db.query(models.Sale)
 
@@ -1657,6 +1896,7 @@ def create_stock_adjustment(
     item_id: int,
     data: schemas.StockAdjustmentCreate,
     db: Session = Depends(get_db),
+    _perm: bool = Depends(require_permission("returns_inventory")),
 ):
     item = db.query(models.Item).filter(models.Item.id == item_id).first()
 
@@ -1739,6 +1979,7 @@ def create_stock_adjustment(
 def get_stock_adjustment_history(
     item_id: int,
     db: Session = Depends(get_db),
+    _perm: bool = Depends(require_permission("returns_inventory")),
 ):
     item = db.query(models.Item).filter(models.Item.id == item_id).first()
 
@@ -2151,7 +2392,11 @@ def loyalty_dashboard(db: Session = Depends(get_db), owner_id: int = Depends(get
 
 
 @app.get("/customers/credit-ledger")
-def customer_credit_ledger(db: Session = Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
+def customer_credit_ledger(
+    db: Session = Depends(get_db),
+    owner_id: int = Depends(get_current_owner_id),
+    _perm: bool = Depends(require_permission("credit_customers")),
+):
     customers = db.query(models.Customer).order_by(models.Customer.customer_name.asc()).all()
     result = []
 
@@ -2228,7 +2473,11 @@ def customer_credit_ledger(db: Session = Depends(get_db), owner_id: int = Depend
 
 
 @app.post("/customer-payments")
-def add_customer_payment(data: schemas.CustomerPaymentCreate, db: Session = Depends(get_db)):
+def add_customer_payment(
+    data: schemas.CustomerPaymentCreate,
+    db: Session = Depends(get_db),
+    _perm: bool = Depends(require_permission("credit_customers")),
+):
     customer = db.query(models.Customer).filter(models.Customer.id == data.customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
@@ -2335,7 +2584,7 @@ def _get_ai_settings(db: Session, owner_id: int):
     return row
 
 @app.get("/ai/settings")
-def get_ai_settings(db: Session=Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
+def get_ai_settings(db: Session=Depends(get_db), owner_id: int = Depends(get_current_owner_id), _perm: bool = Depends(require_permission("settings_ai"))):
     row=_get_ai_settings(db, owner_id)
     key=decrypt_key(row.encrypted_api_key) if row.encrypted_api_key else ""
     return {
@@ -2345,7 +2594,7 @@ def get_ai_settings(db: Session=Depends(get_db), owner_id: int = Depends(get_cur
     }
 
 @app.put("/ai/settings")
-def save_ai_settings(data: schemas.AISettingsUpdate, db: Session=Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
+def save_ai_settings(data: schemas.AISettingsUpdate, db: Session=Depends(get_db), owner_id: int = Depends(get_current_owner_id), _perm: bool = Depends(require_permission("settings_ai"))):
     provider=(data.provider or "").lower()
     if provider not in {"openai","gemini","claude","ollama"}:
         raise HTTPException(status_code=400,detail="Unsupported AI provider")
@@ -2359,7 +2608,7 @@ def save_ai_settings(data: schemas.AISettingsUpdate, db: Session=Depends(get_db)
     return {"message":"AI settings saved"}
 
 @app.post("/ai/test")
-def test_ai_connection(db: Session=Depends(get_db), owner_id: int = Depends(get_current_owner_id)):
+def test_ai_connection(db: Session=Depends(get_db), owner_id: int = Depends(get_current_owner_id), _perm: bool = Depends(require_permission("settings_ai"))):
     row=_get_ai_settings(db, owner_id)
     test_provider(row)
     return {"message":f"{row.provider.title()} connection successful"}
@@ -2709,8 +2958,16 @@ def create_purchase(data: schemas.PurchaseCreate, db: Session = Depends(get_db))
 
 
 @app.get("/sales/{sale_id}/return-detail")
-def get_sale_return_detail(sale_id: int, db: Session = Depends(get_db)):
-    sale = db.query(models.Sale).filter(models.Sale.id == sale_id).first()
+def get_sale_return_detail(
+    sale_id: int,
+    db: Session = Depends(get_db),
+    row_scope: int | None = Depends(sales_report_scope),
+    _perm: bool = Depends(require_permission("sales_report")),
+):
+    query = db.query(models.Sale).filter(models.Sale.id == sale_id)
+    if row_scope is not None:
+        query = query.filter(models.Sale.created_by_id == row_scope)
+    sale = query.first()
     if not sale:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
@@ -2747,7 +3004,11 @@ def get_sale_return_detail(sale_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/sales-returns")
-def create_sales_return(data: schemas.SalesReturnCreate, db: Session = Depends(get_db)):
+def create_sales_return(
+    data: schemas.SalesReturnCreate,
+    db: Session = Depends(get_db),
+    _perm: bool = Depends(require_permission("returns_inventory")),
+):
     sale_item = (
         db.query(models.SaleItem)
         .filter(models.SaleItem.id == data.sale_item_id)
@@ -2852,7 +3113,7 @@ def create_sales_return(data: schemas.SalesReturnCreate, db: Session = Depends(g
 
 
 @app.get("/sales-returns")
-def get_sales_returns(db: Session = Depends(get_db)):
+def get_sales_returns(db: Session = Depends(get_db), _perm: bool = Depends(require_permission("returns_inventory"))):
     rows = (
         db.query(models.SalesReturn)
         .order_by(models.SalesReturn.return_date.desc(), models.SalesReturn.id.desc())
@@ -2881,6 +3142,7 @@ def get_inventory_movements(
     item_id: int | None = None,
     movement_type: str | None = None,
     db: Session = Depends(get_db),
+    _perm: bool = Depends(require_permission("returns_inventory")),
 ):
     query = db.query(models.InventoryMovement)
     if item_id:
@@ -2918,7 +3180,7 @@ def get_inventory_movements(
 
 
 @app.get("/returns/dashboard")
-def returns_dashboard(db: Session = Depends(get_db)):
+def returns_dashboard(db: Session = Depends(get_db), _perm: bool = Depends(require_permission("returns_inventory"))):
     sales_returns = db.query(models.SalesReturn).all()
     purchase_returns = db.query(models.PurchaseReturn).all()
     adjustments = db.query(models.StockAdjustment).all()
@@ -2937,6 +3199,7 @@ def returns_dashboard(db: Session = Depends(get_db)):
 def create_purchase_return(
     data: schemas.PurchaseReturnCreate,
     db: Session = Depends(get_db),
+    _perm: bool = Depends(require_permission("returns_inventory")),
 ):
     purchase_item = (
         db.query(models.PurchaseItem)
@@ -3058,7 +3321,7 @@ def create_purchase_return(
 
 
 @app.get("/purchase-returns")
-def get_purchase_returns(db: Session = Depends(get_db)):
+def get_purchase_returns(db: Session = Depends(get_db), _perm: bool = Depends(require_permission("returns_inventory"))):
     rows = (
         db.query(models.PurchaseReturn)
         .order_by(models.PurchaseReturn.return_date.desc())
@@ -3160,6 +3423,7 @@ def get_settings(
     user_id: str,
     db: Session = Depends(get_db),
     current_user_id: str = Depends(get_current_user_id),
+    _admin: int = Depends(require_admin),
 ):
     if user_id != current_user_id:
         raise HTTPException(status_code=403, detail="Not authorized for this account")
@@ -3185,6 +3449,7 @@ def update_settings(
     data: schemas.SettingsUpdate,
     db: Session = Depends(get_db),
     current_user_id: str = Depends(get_current_user_id),
+    _admin: int = Depends(require_admin),
 ):
     if user_id != current_user_id:
         raise HTTPException(status_code=403, detail="Not authorized for this account")
@@ -3211,6 +3476,7 @@ def update_username(
     data: schemas.UsernameUpdate,
     db: Session = Depends(get_db),
     current_user_id: str = Depends(get_current_user_id),
+    _admin: int = Depends(require_admin),
 ):
     if user_id != current_user_id:
         raise HTTPException(status_code=403, detail="Not authorized for this account")
@@ -3239,6 +3505,7 @@ def update_password(
     data: schemas.PasswordUpdate,
     db: Session = Depends(get_db),
     current_user_id: str = Depends(get_current_user_id),
+    _admin: int = Depends(require_admin),
 ):
     if user_id != current_user_id:
         raise HTTPException(status_code=403, detail="Not authorized for this account")

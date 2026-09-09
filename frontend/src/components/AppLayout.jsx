@@ -21,18 +21,21 @@ import LogoutRoundedIcon from "@mui/icons-material/LogoutRounded";
 import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
 
 const drawerWidth = 272;
+// 4th element: the permission key an employee needs to see this item, null
+// if the module isn't grantable to employees at all (admin-only, always),
+// or "settings" as a sentinel meaning "either settings sub-permission".
 const menu = [
-  ["Dashboard", "/dashboard", <DashboardRoundedIcon />],
-  ["Create Bill", "/create-bill", <ReceiptLongRoundedIcon />],
-  ["Credit Customers", "/customers", <PeopleAltRoundedIcon />],
-  ["Items & Stock", "/items", <Inventory2RoundedIcon />],
-  ["Suppliers", "/dealers", <LocalShippingRoundedIcon />],
-  ["Purchases", "/purchase", <ShoppingCartCheckoutRoundedIcon />],
-  ["Returns & Inventory", "/returns-inventory", <AssignmentReturnRoundedIcon />],
-  ["Stock Report", "/stock-report", <AssessmentRoundedIcon />],
-  ["Sales Report", "/sales-report", <PointOfSaleRoundedIcon />],
-  ["Expenses", "/expense", <PaymentsRoundedIcon />],
-  ["Settings", "/settings", <SettingsRoundedIcon />],
+  ["Dashboard", "/dashboard", <DashboardRoundedIcon />, "dashboard"],
+  ["Create Bill", "/create-bill", <ReceiptLongRoundedIcon />, "create_bill"],
+  ["Credit Customers", "/customers", <PeopleAltRoundedIcon />, "credit_customers"],
+  ["Items & Stock", "/items", <Inventory2RoundedIcon />, null],
+  ["Suppliers", "/dealers", <LocalShippingRoundedIcon />, null],
+  ["Purchases", "/purchase", <ShoppingCartCheckoutRoundedIcon />, null],
+  ["Returns & Inventory", "/returns-inventory", <AssignmentReturnRoundedIcon />, "returns_inventory"],
+  ["Stock Report", "/stock-report", <AssessmentRoundedIcon />, null],
+  ["Sales Report", "/sales-report", <PointOfSaleRoundedIcon />, "sales_report"],
+  ["Expenses", "/expense", <PaymentsRoundedIcon />, null],
+  ["Settings", "/settings", <SettingsRoundedIcon />, "settings"],
 ];
 
 export default function AppLayout({ children }) {
@@ -44,6 +47,17 @@ export default function AppLayout({ children }) {
   const user = useMemo(() => {
     try { return JSON.parse(localStorage.getItem("user")) || {}; } catch { return {}; }
   }, []);
+  // Accounts created before Sprint 7 have no `role` in their stored login
+  // response -- treat that as admin (the only kind of account that existed
+  // then), never as an employee with zero permissions.
+  const isAdmin = user.role !== "employee";
+  const permissions = user.permissions || {};
+  const visibleMenu = useMemo(() => menu.filter(([, , , permKey]) => {
+    if (isAdmin) return true;
+    if (permKey === null) return false;
+    if (permKey === "settings") return !!(permissions.settings_print || permissions.settings_ai);
+    return !!permissions[permKey];
+  }), [isAdmin, permissions]);
   const current = menu.find((x) => location.pathname.startsWith(x[1]))?.[0] || "Billing 24×7";
   const logout = () => { localStorage.removeItem("user"); localStorage.removeItem("token"); navigate("/", { replace: true }); };
 
@@ -79,7 +93,7 @@ export default function AppLayout({ children }) {
           scrollbarWidth: "thin",
         }}
       >
-        {menu.map(([label, path, icon]) => (
+        {visibleMenu.map(([label, path, icon]) => (
           <ListItemButton key={path} component={NavLink} to={path} onClick={() => setMobileOpen(false)}
             sx={{ mb: .55, minHeight: 46, borderRadius: 2.2, color: "#A8B3C7", '& .MuiListItemIcon-root': { color: "inherit", minWidth: 40 }, '&.active': { color: "white", bgcolor: "#2563EB", boxShadow: "0 8px 22px rgba(37,99,235,.30)" }, '&:hover': { color: "white", bgcolor: "rgba(255,255,255,.07)" } }}>
             <ListItemIcon>{icon}</ListItemIcon><ListItemText primary={label} primaryTypographyProps={{ fontSize: 14, fontWeight: 650 }} />
@@ -140,12 +154,14 @@ export default function AppLayout({ children }) {
             <Tooltip title="Account menu">
               <Stack direction="row" alignItems="center" spacing={1} onClick={(e) => setAnchor(e.currentTarget)} sx={{ cursor: "pointer", p: .7, borderRadius: 2, '&:hover': { bgcolor: "#F1F5F9" } }}>
                 <Avatar sx={{ width: 36, height: 36, bgcolor: "primary.main", fontSize: 14 }}>{(user.business_name || "R").slice(0,1).toUpperCase()}</Avatar>
-                {desktop && <Box><Typography fontSize={13} fontWeight={750}>{user.business_name || "Resolvent"}</Typography><Typography variant="caption" color="text.secondary">Administrator</Typography></Box>}
+                {desktop && <Box><Typography fontSize={13} fontWeight={750}>{user.business_name || "Resolvent"}</Typography><Typography variant="caption" color="text.secondary">{isAdmin ? "Administrator" : (user.name || "Employee")}</Typography></Box>}
                 <KeyboardArrowDownRoundedIcon fontSize="small" />
               </Stack>
             </Tooltip>
             <Menu anchorEl={anchor} open={Boolean(anchor)} onClose={() => setAnchor(null)}>
-              <MenuItem onClick={() => { setAnchor(null); navigate("/settings"); }}><SettingsRoundedIcon fontSize="small" sx={{ mr: 1.5 }} /> Settings</MenuItem>
+              {(isAdmin || permissions.settings_print || permissions.settings_ai) && (
+                <MenuItem onClick={() => { setAnchor(null); navigate("/settings"); }}><SettingsRoundedIcon fontSize="small" sx={{ mr: 1.5 }} /> Settings</MenuItem>
+              )}
               <MenuItem onClick={logout} sx={{ color: "error.main" }}><LogoutRoundedIcon fontSize="small" sx={{ mr: 1.5 }} /> Logout</MenuItem>
             </Menu>
           </Toolbar>

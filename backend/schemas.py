@@ -211,3 +211,35 @@ class AISettingsUpdate(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     ollama_mode: str = "local"
+
+
+# --- Sprint 7: employee accounts -------------------------------------------
+# Note: `role`, `tenant_owner_id`, and which business an employee belongs to
+# are never accepted from the client on any of these -- they are always
+# derived server-side from the authenticated admin's own account, same
+# standing rule as owner_id above.
+
+class EmployeePermissions(BaseModel):
+    dashboard: bool = False
+    create_bill: bool = False
+    credit_customers: bool = False
+    returns_inventory: bool = False
+    sales_report: bool = False
+    settings_print: bool = False
+    settings_ai: bool = False
+
+
+class EmployeeCreate(BaseModel):
+    user_id: str
+    name: str
+    password: str | None = None  # omit to have the server generate one
+    permissions: EmployeePermissions = EmployeePermissions()
+
+
+class EmployeeUpdate(BaseModel):
+    name: str | None = None
+    permissions: EmployeePermissions | None = None
+
+
+class EmployeePasswordReset(BaseModel):
+    password: str | None = None  # omit to have the server generate one

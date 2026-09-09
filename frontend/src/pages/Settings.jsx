@@ -7,16 +7,24 @@ import {
   Card,
   CardContent,
   Checkbox,
+  Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Divider,
   FormControlLabel,
   Grid,
+  IconButton,
   MenuItem,
   Paper,
   Slider,
   Stack,
+  Switch,
   Tab,
   Tabs,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import BusinessRoundedIcon from "@mui/icons-material/BusinessRounded";
@@ -30,9 +38,14 @@ import PaymentsRoundedIcon from "@mui/icons-material/PaymentsRounded";
 import QrCode2RoundedIcon from "@mui/icons-material/QrCode2Rounded";
 import WorkspacePremiumRoundedIcon from "@mui/icons-material/WorkspacePremiumRounded";
 import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
+import PeopleAltRoundedIcon from "@mui/icons-material/PeopleAltRounded";
+import AddRoundedIcon from "@mui/icons-material/AddRounded";
+import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
 import AppLayout from "../components/AppLayout";
 import PageHeader from "../components/PageHeader";
 import PrintDesignerPreview from "../components/PrintDesignerPreview";
+import AppTable from "../components/AppTable";
+import ActionButton from "../components/ActionButton";
 import {
   getSettings,
   getLoyaltySettings,
@@ -43,6 +56,11 @@ import {
   updatePassword,
   updateSettings,
   updateUsername,
+  createEmployee,
+  getEmployees,
+  updateEmployee,
+  resetEmployeePassword,
+  setEmployeeActive,
 } from "../services/api";
 import {
   DEFAULT_UPI_SETTINGS,
@@ -93,13 +111,126 @@ const loadJson = (key, fallback) => {
   }
 };
 
+const PERMISSION_MODULES = [
+  { key: "dashboard", label: "Dashboard" },
+  { key: "create_bill", label: "Create Bill" },
+  { key: "credit_customers", label: "Credit Customers" },
+  { key: "returns_inventory", label: "Returns & Inventory" },
+  { key: "sales_report", label: "Sales Report (own bills only)" },
+  { key: "settings_print", label: "Settings → Print Setting" },
+  { key: "settings_ai", label: "Settings → AI Setting" },
+];
+
+const EMPTY_PERMISSIONS = PERMISSION_MODULES.reduce(
+  (acc, m) => ({ ...acc, [m.key]: false }),
+  {}
+);
+
 export default function Settings() {
   const user = JSON.parse(localStorage.getItem("user")) || {};
   const userId = user.user_id || "admin";
+  // Accounts created before Sprint 7 have no `role` stored -- treat that as
+  // admin, since that was the only kind of account that existed then.
+  const isAdmin = user.role !== "employee";
+  const myPermissions = user.permissions || {};
 
   const [tab, setTab] = useState(0);
   const [message, setMessage] = useState({ type: "", text: "" });
   const [loading, setLoading] = useState(false);
+
+  // --- Sprint 7: employee accounts (Admin-only tab) ---------------------
+  const [employees, setEmployees] = useState([]);
+  const [employeesLoading, setEmployeesLoading] = useState(false);
+  const [employeeDialog, setEmployeeDialog] = useState(null); // null | "create" | employee object being edited
+  const [employeeForm, setEmployeeForm] = useState({ user_id: "", name: "", password: "", permissions: EMPTY_PERMISSIONS });
+  const [employeeSaving, setEmployeeSaving] = useState(false);
+  const [revealedCredentials, setRevealedCredentials] = useState(null); // { user_id, password } shown once after create/reset
+
+  const loadEmployees = () => {
+    if (!isAdmin) return;
+    setEmployeesLoading(true);
+    getEmployees()
+      .then(setEmployees)
+      .catch((err) => setMessage({ type: "error", text: err.message || "Failed to load employees" }))
+      .finally(() => setEmployeesLoading(false));
+  };
+
+  useEffect(() => {
+    if (isAdmin) loadEmployees();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const openCreateEmployee = () => {
+    setEmployeeForm({ user_id: "", name: "", password: "", permissions: EMPTY_PERMISSIONS });
+    setEmployeeDialog("create");
+  };
+
+  const openEditEmployee = (emp) => {
+    setEmployeeForm({
+      user_id: emp.user_id,
+      name: emp.name || "",
+      password: "",
+      permissions: { ...EMPTY_PERMISSIONS, ...(emp.permissions || {}) },
+    });
+    setEmployeeDialog(emp);
+  };
+
+  const closeEmployeeDialog = () => setEmployeeDialog(null);
+
+  const toggleEmployeePermission = (key) => {
+    setEmployeeForm((f) => ({ ...f, permissions: { ...f.permissions, [key]: !f.permissions[key] } }));
+  };
+
+  const saveEmployee = async () => {
+    setEmployeeSaving(true);
+    try {
+      if (employeeDialog === "create") {
+        if (!employeeForm.user_id.trim() || !employeeForm.name.trim()) {
+          setMessage({ type: "error", text: "Username and name are required." });
+          return;
+        }
+        const result = await createEmployee({
+          user_id: employeeForm.user_id.trim(),
+          name: employeeForm.name.trim(),
+          password: employeeForm.password.trim() || null,
+          permissions: employeeForm.permissions,
+        });
+        setRevealedCredentials({ user_id: employeeForm.user_id.trim(), password: result.password });
+        setMessage({ type: "success", text: "Employee created. Share the credentials shown below with them now -- the password won't be shown again." });
+      } else {
+        await updateEmployee(employeeDialog.id, {
+          name: employeeForm.name.trim(),
+          permissions: employeeForm.permissions,
+        });
+        setMessage({ type: "success", text: "Employee updated." });
+      }
+      closeEmployeeDialog();
+      loadEmployees();
+    } catch (err) {
+      setMessage({ type: "error", text: err.message || "Failed to save employee" });
+    } finally {
+      setEmployeeSaving(false);
+    }
+  };
+
+  const handleResetPassword = async (emp) => {
+    try {
+      const result = await resetEmployeePassword(emp.id, null);
+      setRevealedCredentials({ user_id: emp.user_id, password: result.password });
+      setMessage({ type: "success", text: `Password reset for ${emp.user_id}. Share the new password shown below with them now.` });
+    } catch (err) {
+      setMessage({ type: "error", text: err.message || "Failed to reset password" });
+    }
+  };
+
+  const handleToggleActive = async (emp) => {
+    try {
+      await setEmployeeActive(emp.id, !emp.is_active);
+      loadEmployees();
+    } catch (err) {
+      setMessage({ type: "error", text: err.message || "Failed to update employee" });
+    }
+  };
 
   const [business, setBusiness] = useState({
     business_name: "",
@@ -1584,11 +1715,169 @@ export default function Settings() {
     </Grid>
   );
 
+  const employeesPanel = (
+    <Grid container spacing={3}>
+      <Grid size={12}>
+        <Card>
+          <CardContent sx={{ p: 3 }}>
+            <Stack direction="row" spacing={1.5} alignItems="center" justifyContent="space-between" mb={3}>
+              <Stack direction="row" spacing={1.5} alignItems="center">
+                <PeopleAltRoundedIcon color="primary" />
+                <Box>
+                  <Typography variant="h6">Employees</Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                    Create staff logins and choose exactly what each one can access. You'll always see the whole Sales Report -- an employee only ever sees invoices they personally created.
+                  </Typography>
+                </Box>
+              </Stack>
+              <ActionButton startIcon={<AddRoundedIcon />} onClick={openCreateEmployee}>
+                Add Employee
+              </ActionButton>
+            </Stack>
+
+            {revealedCredentials && (
+              <Alert severity="info" sx={{ mb: 2.5 }} onClose={() => setRevealedCredentials(null)}>
+                <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap">
+                  <Typography variant="body2">
+                    Username: <strong>{revealedCredentials.user_id}</strong> &nbsp;·&nbsp; Password: <strong>{revealedCredentials.password}</strong>
+                  </Typography>
+                  <Tooltip title="Copy password">
+                    <IconButton
+                      size="small"
+                      onClick={() => navigator.clipboard?.writeText(revealedCredentials.password)}
+                    >
+                      <ContentCopyRoundedIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Stack>
+                <Typography variant="caption" color="text.secondary">
+                  This won't be shown again -- share it with the employee now, or use Reset Password later if it's lost.
+                </Typography>
+              </Alert>
+            )}
+
+            <AppTable
+              emptyText={employeesLoading ? "Loading..." : "No employees yet"}
+              columns={[
+                { key: "name", label: "Name", render: (e) => e.name || "—" },
+                { key: "user_id", label: "Username" },
+                {
+                  key: "permissions",
+                  label: "Access",
+                  render: (e) => (
+                    <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                      {PERMISSION_MODULES.filter((m) => e.permissions?.[m.key]).map((m) => (
+                        <Chip key={m.key} label={m.label} size="small" />
+                      ))}
+                      {PERMISSION_MODULES.every((m) => !e.permissions?.[m.key]) && (
+                        <Typography variant="caption" color="text.secondary">No access granted</Typography>
+                      )}
+                    </Stack>
+                  ),
+                },
+                {
+                  key: "is_active",
+                  label: "Status",
+                  render: (e) => (
+                    <FormControlLabel
+                      control={<Switch size="small" checked={e.is_active} onChange={() => handleToggleActive(e)} />}
+                      label={e.is_active ? "Active" : "Disabled"}
+                    />
+                  ),
+                },
+                {
+                  key: "actions",
+                  label: "",
+                  render: (e) => (
+                    <Stack direction="row" spacing={1}>
+                      <Button size="small" onClick={() => openEditEmployee(e)}>Edit</Button>
+                      <Button size="small" color="warning" startIcon={<LockResetRoundedIcon />} onClick={() => handleResetPassword(e)}>
+                        Reset Password
+                      </Button>
+                    </Stack>
+                  ),
+                },
+              ]}
+              rows={employees}
+            />
+          </CardContent>
+        </Card>
+      </Grid>
+
+      <Dialog open={Boolean(employeeDialog)} onClose={closeEmployeeDialog} maxWidth="sm" fullWidth>
+        <DialogTitle>{employeeDialog === "create" ? "Add Employee" : "Edit Employee"}</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2.5} sx={{ mt: 0.5 }}>
+            <TextField
+              label="Username"
+              value={employeeForm.user_id}
+              disabled={employeeDialog !== "create"}
+              onChange={(e) => setEmployeeForm((f) => ({ ...f, user_id: e.target.value }))}
+              fullWidth
+            />
+            <TextField
+              label="Display Name"
+              value={employeeForm.name}
+              onChange={(e) => setEmployeeForm((f) => ({ ...f, name: e.target.value }))}
+              fullWidth
+            />
+            {employeeDialog === "create" && (
+              <TextField
+                label="Password (leave blank to auto-generate)"
+                value={employeeForm.password}
+                onChange={(e) => setEmployeeForm((f) => ({ ...f, password: e.target.value }))}
+                fullWidth
+              />
+            )}
+            <Box>
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>Access</Typography>
+              <Grid container spacing={0.5}>
+                {PERMISSION_MODULES.map((m) => (
+                  <Grid size={{ xs: 12, sm: 6 }} key={m.key}>
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={Boolean(employeeForm.permissions[m.key])}
+                          onChange={() => toggleEmployeePermission(m.key)}
+                        />
+                      }
+                      label={m.label}
+                    />
+                  </Grid>
+                ))}
+              </Grid>
+            </Box>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeEmployeeDialog}>Cancel</Button>
+          <Button variant="contained" disabled={employeeSaving} onClick={saveEmployee}>
+            {employeeDialog === "create" ? "Create Employee" : "Save Changes"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Grid>
+  );
+
+  // Only the tabs the logged-in account can actually use -- an admin sees
+  // everything; an employee sees only Print/AI settings if granted, and
+  // never sees Business Profile, Payment QR, Loyalty, Account & Security or
+  // Employees regardless of any permission (those stay Admin-only, always).
+  const visibleTabs = [
+    { key: "business", label: "Business Profile", icon: <BusinessRoundedIcon />, visible: isAdmin, panel: businessPanel },
+    { key: "print", label: "Print Designer", icon: <PrintRoundedIcon />, visible: isAdmin || myPermissions.settings_print, panel: designerPanel },
+    { key: "payment", label: "Payment QR", icon: <PaymentsRoundedIcon />, visible: isAdmin, panel: paymentPanel },
+    { key: "loyalty", label: "Loyalty", icon: <WorkspacePremiumRoundedIcon />, visible: isAdmin, panel: loyaltyPanel },
+    { key: "ai", label: "AI", icon: <AutoAwesomeRoundedIcon />, visible: isAdmin || myPermissions.settings_ai, panel: aiPanel },
+    { key: "account", label: "Account & Security", icon: <PersonRoundedIcon />, visible: isAdmin, panel: accountPanel },
+    { key: "employees", label: "Employees", icon: <PeopleAltRoundedIcon />, visible: isAdmin, panel: employeesPanel },
+  ].filter((t) => t.visible);
+
   return (
     <AppLayout>
       <PageHeader
         title="Settings"
-        subtitle="Configure business identity, invoice designer, UPI payment QR and account security"
+        subtitle={isAdmin ? "Configure business identity, invoice designer, UPI payment QR and account security" : "Configure the settings you have access to"}
       />
 
       {message.text && (
@@ -1603,27 +1892,19 @@ export default function Settings() {
 
       <Card sx={{ mb: 3 }}>
         <Tabs
-          value={tab}
+          value={Math.min(tab, visibleTabs.length - 1)}
           onChange={(_, value) => setTab(value)}
           variant="scrollable"
           scrollButtons="auto"
           sx={{ px: 2 }}
         >
-          <Tab icon={<BusinessRoundedIcon />} iconPosition="start" label="Business Profile" />
-          <Tab icon={<PrintRoundedIcon />} iconPosition="start" label="Print Designer" />
-          <Tab icon={<PaymentsRoundedIcon />} iconPosition="start" label="Payment QR" />
-          <Tab icon={<WorkspacePremiumRoundedIcon />} iconPosition="start" label="Loyalty" />
-          <Tab icon={<AutoAwesomeRoundedIcon />} iconPosition="start" label="AI" />
-          <Tab icon={<PersonRoundedIcon />} iconPosition="start" label="Account & Security" />
+          {visibleTabs.map((t) => (
+            <Tab key={t.key} icon={t.icon} iconPosition="start" label={t.label} />
+          ))}
         </Tabs>
       </Card>
 
-      {tab === 0 && businessPanel}
-      {tab === 1 && designerPanel}
-      {tab === 2 && paymentPanel}
-      {tab === 3 && loyaltyPanel}
-      {tab === 4 && aiPanel}
-      {tab === 5 && accountPanel}
+      {visibleTabs[Math.min(tab, visibleTabs.length - 1)]?.panel}
     </AppLayout>
   );
 }

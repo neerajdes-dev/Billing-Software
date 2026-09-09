@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Date, ForeignKey
+from sqlalchemy import Boolean, Column, Integer, JSON, String, Float, DateTime, Date, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base, TenantScoped
@@ -15,6 +15,27 @@ class User(Base):
     gst_number = Column(String)
     address = Column(String)
     created_at = Column(DateTime, default=datetime.now)
+
+    # --- Sprint 7: employee accounts -----------------------------------
+    # "admin" (the business's own login, default) or "employee" (a staff
+    # login created by that admin). Never trust a client-supplied value for
+    # this -- it only ever comes from the database row itself.
+    role = Column(String, nullable=False, default="admin")
+    # NULL for admins. For an employee, the admin's own `id` -- this is what
+    # `require_authentication` resolves the effective tenant (`owner_id`)
+    # from, so an employee's requests are scoped to their admin's business
+    # data without needing a second owner_id concept anywhere else.
+    tenant_owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    # Per-employee module checklist, e.g. {"create_bill": true, ...}.
+    # Meaningless for admins, who always have full access regardless of
+    # this column's contents.
+    permissions = Column(JSON, nullable=False, default=dict)
+    # Soft-disable for employee accounts (never hard-delete a login -- it's
+    # referenced by Sale.created_by_id on that employee's past invoices).
+    is_active = Column(Boolean, nullable=False, default=True)
+    # Employee's own display name (e.g. "Priya - Counter Staff"). NULL for
+    # admin rows, which already have business_name for this purpose.
+    name = Column(String, nullable=True)
 
 class Customer(Base, TenantScoped):
     __tablename__ = "customers"
@@ -138,6 +159,10 @@ class Sale(Base, TenantScoped):
     loyalty_discount = Column(Float, default=0)
     created_at = Column(DateTime, default=datetime.now)
     bill_date = Column(DateTime, default=datetime.now)
+    # The specific login (admin or employee) that created this invoice --
+    # distinct from owner_id (the business). Used to scope an employee's own
+    # Sales Report to just their own bills; admins are never filtered by it.
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     items = relationship("SaleItem", back_populates="sale", cascade="all, delete-orphan")
 
 class SaleItem(Base, TenantScoped):

@@ -443,3 +443,30 @@ export const getInventoryMovements = (itemId = "", movementType = "All") => {
 
 export const getReturnsDashboard = () =>
   request("/returns/dashboard");
+
+
+// Sprint 7: employee accounts (Admin-only)
+export const createEmployee = (data) =>
+  request("/employees", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+
+export const getEmployees = () => request("/employees");
+
+export const updateEmployee = (employeeId, data) =>
+  request(`/employees/${employeeId}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+
+export const resetEmployeePassword = (employeeId, password) =>
+  request(`/employees/${employeeId}/reset-password`, {
+    method: "PUT",
+    body: JSON.stringify({ password: password || null }),
+  });
+
+export const setEmployeeActive = (employeeId, active) =>
+  request(`/employees/${employeeId}/${active ? "enable" : "disable"}`, {
+    method: "PUT",
+  });
