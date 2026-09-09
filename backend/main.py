@@ -371,6 +371,35 @@ async def cors_preflight_fallback(full_path: str, request: Request):
 PUBLIC_PATHS = {"/", "/health", "/signup", "/login", "/docs", "/openapi.json", "/redoc"}
 
 
+def _unauthenticated_response(request: Request, status_code: int, detail: str) -> JSONResponse:
+    """
+    Build a 401/403 error response that carries its own CORS headers.
+
+    This middleware returns these responses directly, without ever calling
+    call_next() -- and responses built that way do not reliably pick up the
+    Access-Control-Allow-Origin header from CORSMiddleware above (observed:
+    every such response arrives at the browser with no CORS headers at all,
+    even though CORSMiddleware is registered first/outermost and every
+    response that *does* go through call_next(), including this same
+    middleware's own success path, gets the header correctly). Rather than
+    depend on that ASGI-layer interaction working a particular way, this
+    guarantees the header directly -- the same defensive approach already
+    used for the OPTIONS preflight fallback below.
+
+    Left unfixed, this doesn't just affect real auth failures: any request
+    made with a missing, expired, or otherwise invalid token surfaces to the
+    frontend as a generic "Cannot connect to the server" network error
+    instead of a proper 401, which is indistinguishable from a real outage.
+    """
+    origin = request.headers.get("origin", "")
+    headers = {}
+    if origin in cors_origins:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+        headers["Vary"] = "Origin"
+    return JSONResponse(status_code=status_code, content={"detail": detail}, headers=headers)
+
+
 @app.middleware("http")
 async def require_authentication(request: Request, call_next):
     if request.method == "OPTIONS" or request.url.path in PUBLIC_PATHS:
@@ -378,15 +407,15 @@ async def require_authentication(request: Request, call_next):
 
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
-        return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+        return _unauthenticated_response(request, 401, "Not authenticated")
 
     token = auth_header[len("Bearer "):].strip()
     try:
         payload = decode_access_token(token)
     except jwt.ExpiredSignatureError:
-        return JSONResponse(status_code=401, content={"detail": "Session expired. Please log in again."})
+        return _unauthenticated_response(request, 401, "Session expired. Please log in again.")
     except jwt.PyJWTError:
-        return JSONResponse(status_code=401, content={"detail": "Invalid session. Please log in again."})
+        return _unauthenticated_response(request, 401, "Invalid session. Please log in again.")
 
     request.state.user_id = payload.get("sub")
 
@@ -410,10 +439,10 @@ async def require_authentication(request: Request, call_next):
         db_for_lookup.close()
 
     if account is None:
-        return JSONResponse(status_code=401, content={"detail": "Invalid session. Please log in again."})
+        return _unauthenticated_response(request, 401, "Invalid session. Please log in again.")
 
     if not account.is_active:
-        return JSONResponse(status_code=401, content={"detail": "This account has been disabled. Contact your business admin."})
+        return _unauthenticated_response(request, 401, "This account has been disabled. Contact your business admin.")
 
     # Sprint 7: an employee's requests are scoped to their admin's business
     # data, not their own row -- resolve the *effective* tenant id here so

@@ -1,10 +1,11 @@
-fastapi>=0.115,<1.0
-uvicorn[standard]>=0.34,<1.0
-sqlalchemy>=2.0,<3.0
-psycopg2-binary>=2.9,<3.0
-python-dotenv>=1.0,<2.0
-pydantic>=2.0,<3.0
+fastapi==0.141.1
+starlette==1.6.0
+uvicorn[standard]==0.52.4
+sqlalchemy==2.0.52
+psycopg2-binary==2.9.12
+python-dotenv==1.2.3
+pydantic==2.13.5
 
-python-multipart>=0.0.9,<1.0
-cryptography>=43,<47
-PyJWT>=2.9,<3.0
+python-multipart==0.0.32
+cryptography==46.0.7
+PyJWT==2.13.0
