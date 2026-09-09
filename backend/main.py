@@ -1501,10 +1501,14 @@ def add_dealer_bill(data: schemas.DealerBillCreate, db: Session = Depends(get_db
         raise HTTPException(status_code=404, detail="Dealer not found")
     if data.bill_amount <= 0:
         raise HTTPException(status_code=400, detail="Bill amount must be greater than zero")
-    bill_date = datetime.now()
-    if data.bill_date:
-        try: bill_date = datetime.strptime(data.bill_date, "%Y-%m-%d")
-        except ValueError as exc: raise HTTPException(status_code=400, detail="Invalid bill date") from exc
+    # data.bill_date is already a real `date` object here (schemas.py types
+    # it as `bill_date: date`, so Pydantic parses/validates the incoming
+    # string before this handler ever runs) -- NOT the raw "YYYY-MM-DD"
+    # string datetime.strptime() expects. Calling strptime() on it raised an
+    # unhandled TypeError (caught by neither the `except ValueError` here nor
+    # anything else), so this endpoint 500'd on every request that included a
+    # bill date at all. Just convert the already-valid date directly.
+    bill_date = datetime.combine(data.bill_date, datetime.min.time()) if data.bill_date else datetime.now()
     bill = models.DealerBill(owner_id=dealer.owner_id, dealer_id=data.dealer_id, bill_number=data.bill_number,
         bill_amount=data.bill_amount, bill_date=bill_date, note=data.note)
     db.add(bill); db.commit(); db.refresh(bill)
