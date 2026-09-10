@@ -3004,6 +3004,15 @@ def get_sale_return_detail(
     if not sale:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
+    # The business's own letterhead details for reprinting this invoice with
+    # the real InvoicePrint template (name/address/GSTIN, not the sale's
+    # creator -- always the tenant's own admin row, mirroring how /login
+    # resolves an employee's business_name). GET /settings/{user_id} isn't an
+    # option here: it's require_admin-only, and an employee with the
+    # sales_report permission (this endpoint's own gate) must still be able
+    # to reprint their own invoices.
+    business_row = db.query(models.User).filter(models.User.id == sale.owner_id).first()
+
     return {
         "id": sale.id,
         "invoice_no": sale.invoice_no,
@@ -3016,6 +3025,22 @@ def get_sale_return_detail(
         "loyalty_discount": round(to_float(sale.loyalty_discount), 2),
         "gst_amount": round(to_float(sale.gst_amount), 2),
         "final_amount": round(to_float(sale.final_amount), 2),
+        "total_mrp": round(to_float(sale.total_mrp), 2),
+        "total_saving": round(to_float(sale.total_saving), 2),
+        "cash_amount": round(to_float(sale.cash_amount), 2),
+        "online_amount": round(to_float(sale.online_amount), 2),
+        "credit_amount": round(to_float(sale.credit_amount), 2),
+        "amount_received": round(to_float(sale.amount_received), 2),
+        "change_return": round(to_float(sale.change_return), 2),
+        "loyalty_points_earned": round(to_float(sale.loyalty_points_earned), 2),
+        "loyalty_points_redeemed": round(to_float(sale.loyalty_points_redeemed), 2),
+        "business": {
+            "business_name": business_row.business_name if business_row else "",
+            "address": getattr(business_row, "address", "") if business_row else "",
+            "gst_number": getattr(business_row, "gst_number", "") if business_row else "",
+            "mobile": business_row.mobile if business_row else "",
+            "email": business_row.email if business_row else "",
+        },
         "items": [
             {
                 "id": row.id,
@@ -3028,6 +3053,7 @@ def get_sale_return_detail(
                     0,
                 ),
                 "rate": round(to_float(row.rate), 2),
+                "mrp": round(to_float(getattr(row, "mrp", 0)), 2),
                 "gst_percent": round(to_float(row.gst_percent), 2),
                 "amount": round(to_float(row.amount), 2),
             }

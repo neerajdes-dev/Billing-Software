@@ -38,10 +38,32 @@ import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import ChevronRightRoundedIcon from "@mui/icons-material/ChevronRightRounded";
 import AppLayout from "../components/AppLayout";
 import PageHeader from "../components/PageHeader";
+import InvoicePrint from "../components/InvoicePrint";
+import { runInvoicePrint } from "../utils/printInvoice";
 import {
   getSaleReturnDetail,
   getSalesReport,
 } from "../services/api";
+
+// Same shape/defaults as CreateBill.jsx's printSettings -- both pages read
+// the merchant's Print Designer choice from the same localStorage key, so a
+// reprint here always matches what Create Bill would produce for the same
+// invoice.
+const DEFAULT_PRINT_SETTINGS = {
+  layout: "a4",
+  thermal_size: "80mm",
+  show_logo: true,
+  show_barcode: true,
+  show_batch_expiry: true,
+  show_savings: true,
+  show_payment_qr: true,
+  show_footer: true,
+  header_alignment: "left",
+  logo_position: "left",
+  logo_width: 90,
+  logo_height: 60,
+  footer_message: "Thank you for your business. Visit again.",
+};
 
 const money = (value) =>
   new Intl.NumberFormat("en-IN", {
@@ -123,6 +145,18 @@ export default function SalesReport() {
   const [invoiceDrawerOpen, setInvoiceDrawerOpen] = useState(false);
   const [invoiceLoading, setInvoiceLoading] = useState(false);
   const [invoiceDetail, setInvoiceDetail] = useState(null);
+  const [printSettings] = useState(() => {
+    try {
+      return {
+        ...DEFAULT_PRINT_SETTINGS,
+        ...(JSON.parse(
+          localStorage.getItem("billing_print_settings")
+        ) || {}),
+      };
+    } catch {
+      return DEFAULT_PRINT_SETTINGS;
+    }
+  });
 
   const load = async (customFilters = filters) => {
     try {
@@ -243,130 +277,17 @@ export default function SalesReport() {
   const printInvoiceDetail = () => {
     if (!invoiceDetail) return;
 
-    const businessName =
-      JSON.parse(localStorage.getItem("user") || "{}")
-        ?.business_name || "Business";
-
-    const itemRows = (invoiceDetail.items || [])
-      .map(
-        (item) => `
-          <tr>
-            <td>${escapeHtml(item.item_name || "—")}</td>
-            <td class="num">${escapeHtml(item.quantity || 0)}</td>
-            <td class="num">${escapeHtml(money(item.rate))}</td>
-            <td class="num">${escapeHtml(
-              Number(item.gst_percent || 0).toFixed(2)
-            )}%</td>
-            <td class="num">${escapeHtml(money(item.amount))}</td>
-          </tr>
-        `
-      )
-      .join("");
-
-    const win = window.open(
-      "",
-      "_blank",
-      "width=900,height=760"
-    );
-
-    if (!win) {
-      setMessage({
-        type: "error",
-        text: "Popup blocked. Please allow popups to print this invoice.",
-      });
-      return;
+    // Reprints through the same <InvoicePrint> template and Print Designer
+    // settings used when the invoice was first billed (rendered hidden
+    // below, revealed only via the shared print CSS in index.css/
+    // runInvoicePrint) -- not a separate hand-rolled layout. That used to be
+    // the case here: a plain Arial table with no logo, no A4/thermal sizing
+    // and no theme, so a reprint from Sales Report looked nothing like the
+    // real invoice from Create Bill.
+    const result = runInvoicePrint(printSettings);
+    if (!result.ok) {
+      setMessage({ type: "error", text: result.error });
     }
-
-    win.document.write(`
-      <!doctype html>
-      <html>
-        <head>
-          <title>${escapeHtml(invoiceDetail.invoice_no || "Invoice")}</title>
-          <style>
-            body { font-family: Arial, sans-serif; margin: 28px; color: #111827; }
-            .top { display:flex; justify-content:space-between; gap:20px; margin-bottom:20px; }
-            h1,h2,p { margin:0; }
-            .muted { color:#64748b; font-size:12px; margin-top:4px; }
-            .box { border:1px solid #cbd5e1; border-radius:8px; padding:14px; margin:14px 0; }
-            table { width:100%; border-collapse:collapse; margin-top:14px; }
-            th,td { border-bottom:1px solid #e2e8f0; padding:8px; text-align:left; font-size:12px; }
-            th { background:#f8fafc; }
-            .num { text-align:right; }
-            .total { display:flex; justify-content:flex-end; margin-top:20px; }
-            .total-inner { width:320px; }
-            .row { display:flex; justify-content:space-between; padding:5px 0; }
-            .grand { font-size:18px; font-weight:800; border-top:1px solid #94a3b8; margin-top:6px; padding-top:10px; }
-          </style>
-        </head>
-        <body>
-          <div class="top">
-            <div>
-              <h1>${escapeHtml(businessName)}</h1>
-              <h2>Invoice Details</h2>
-              <div class="muted">${escapeHtml(invoiceDetail.invoice_no || "—")}</div>
-            </div>
-            <div>
-              <strong>${escapeHtml(formatDate(invoiceDetail.bill_date))}</strong>
-              <div class="muted">${escapeHtml(invoiceDetail.payment_mode || "—")}</div>
-            </div>
-          </div>
-
-          <div class="box">
-            <strong>${escapeHtml(invoiceDetail.customer_name || "Walk-in Customer")}</strong>
-            <div class="muted">${escapeHtml(invoiceDetail.customer_mobile || "No mobile")}</div>
-          </div>
-
-          <table>
-            <thead>
-              <tr>
-                <th>Product</th>
-                <th class="num">Qty</th>
-                <th class="num">Rate</th>
-                <th class="num">GST</th>
-                <th class="num">Amount</th>
-              </tr>
-            </thead>
-            <tbody>${itemRows}</tbody>
-          </table>
-
-          <div class="total">
-            <div class="total-inner">
-              <div class="row">
-                <span>Subtotal</span>
-                <span>${escapeHtml(money(invoiceDetail.subtotal))}</span>
-              </div>
-              ${
-                Number(invoiceDetail.discount_amount || 0) > 0
-                  ? `<div class="row">
-                <span>Discount</span>
-                <span>-${escapeHtml(money(invoiceDetail.discount_amount))}</span>
-              </div>`
-                  : ""
-              }
-              ${
-                Number(invoiceDetail.loyalty_discount || 0) > 0
-                  ? `<div class="row">
-                <span>Loyalty Discount</span>
-                <span>-${escapeHtml(money(invoiceDetail.loyalty_discount))}</span>
-              </div>`
-                  : ""
-              }
-              <div class="row">
-                <span>GST</span>
-                <span>${escapeHtml(money(invoiceDetail.gst_amount))}</span>
-              </div>
-              <div class="row grand">
-                <span>Invoice Total</span>
-                <span>${escapeHtml(money(invoiceDetail.final_amount))}</span>
-              </div>
-            </div>
-          </div>
-
-          <script>window.onload=()=>window.print();</script>
-        </body>
-      </html>
-    `);
-    win.document.close();
   };
 
   const exportExcel = () => {
@@ -927,12 +848,14 @@ export default function SalesReport() {
                 <Grid size={{ xs: 12, sm: 4, md: 2 }}>
                   <Button
                     fullWidth
+                    size="small"
                     variant="outlined"
                     startIcon={<RefreshRoundedIcon />}
                     onClick={() => load()}
                     disabled={loading}
                     sx={{
                       minWidth: 110,
+                      height: 40,
                       whiteSpace: "nowrap",
                     }}
                   >
@@ -943,12 +866,14 @@ export default function SalesReport() {
                 <Grid size={{ xs: 12, sm: 4, md: 3 }}>
                   <Button
                     fullWidth
+                    size="small"
                     variant="outlined"
                     startIcon={<FileDownloadRoundedIcon />}
                     onClick={exportExcel}
                     disabled={!filteredSales.length}
                     sx={{
                       minWidth: 145,
+                      height: 40,
                       whiteSpace: "nowrap",
                     }}
                   >
@@ -959,12 +884,14 @@ export default function SalesReport() {
                 <Grid size={{ xs: 12, sm: 4, md: 2 }}>
                   <Button
                     fullWidth
+                    size="small"
                     variant="outlined"
                     startIcon={<PrintRoundedIcon />}
                     onClick={printReport}
                     disabled={!filteredSales.length}
                     sx={{
                       minWidth: 100,
+                      height: 40,
                       whiteSpace: "nowrap",
                     }}
                   >
@@ -1455,6 +1382,37 @@ export default function SalesReport() {
         </Box>
       </Drawer>
 
+      {invoiceDetail && (
+        <InvoicePrint
+          business={invoiceDetail.business || {}}
+          invoice={{
+            invoice_number: invoiceDetail.invoice_no,
+            bill_date: invoiceDetail.bill_date,
+            payment_mode: invoiceDetail.payment_mode,
+            subtotal: invoiceDetail.subtotal,
+            gst_amount: invoiceDetail.gst_amount,
+            discount: invoiceDetail.discount_amount,
+            total_mrp: invoiceDetail.total_mrp,
+            total_saving: invoiceDetail.total_saving,
+            total_amount: invoiceDetail.final_amount,
+            paid_amount: invoiceDetail.amount_received,
+            cash_amount: invoiceDetail.cash_amount,
+            online_amount: invoiceDetail.online_amount,
+            credit_amount: invoiceDetail.credit_amount,
+            amount_received: invoiceDetail.amount_received,
+            change_return: invoiceDetail.change_return,
+            loyalty_points_earned: invoiceDetail.loyalty_points_earned,
+            loyalty_points_redeemed: invoiceDetail.loyalty_points_redeemed,
+            loyalty_discount: invoiceDetail.loyalty_discount,
+          }}
+          customer={{
+            customer_name: invoiceDetail.customer_name,
+            mobile: invoiceDetail.customer_mobile,
+          }}
+          items={invoiceDetail.items}
+          printSettings={printSettings}
+        />
+      )}
     </AppLayout>
   );
 }
