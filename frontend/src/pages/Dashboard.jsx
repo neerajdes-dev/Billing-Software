@@ -360,7 +360,16 @@ export default function Dashboard() {
               <Box sx={{ py: 5, textAlign: "center", color: "text.secondary" }}><Inventory2RoundedIcon sx={{ fontSize: 42, opacity: .3 }} /><Typography>Stock levels look healthy</Typography></Box>
             ) : data.low_stock_items.map((item) => (
               <Box key={item.id} sx={{ py: 1.3, borderBottom: "1px solid", borderColor: "divider" }}>
-                <Stack direction="row" justifyContent="space-between"><Typography fontWeight={750}>{item.item_name}</Typography><Typography fontWeight={850} color={item.stock <= 3 ? "error.main" : "warning.main"}>{item.stock} left</Typography></Stack>
+                {/* A long item name used to run straight into "N left" with
+                    zero gap (e.g. "...Cookies 29g0 left") whenever the name
+                    was wide enough to leave justifyContent="space-between"
+                    no room to work with in this narrow column. Truncating
+                    the name and pinning the count's width guarantees a
+                    visible gap regardless of name length or column width. */}
+                <Stack direction="row" alignItems="center" spacing={1}>
+                  <Typography fontWeight={750} noWrap sx={{ flex: 1, minWidth: 0 }} title={item.item_name}>{item.item_name}</Typography>
+                  <Typography fontWeight={850} color={item.stock <= 3 ? "error.main" : "warning.main"} sx={{ flexShrink: 0, whiteSpace: "nowrap" }}>{item.stock} left</Typography>
+                </Stack>
                 <Typography variant="caption" color="text.secondary">Barcode: {item.barcode}</Typography>
                 <LinearProgress variant="determinate" value={Math.min(item.stock * 10, 100)} color={item.stock <= 3 ? "error" : "warning"} sx={{ mt: 1, height: 5, borderRadius: 5 }} />
               </Box>

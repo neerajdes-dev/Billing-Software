@@ -1560,6 +1560,7 @@ export default function CreateBill() {
             onClick={() =>
               setResumeDialogOpen(true)
             }
+            disabled={!heldBills.length}
           >
             Resume ({heldBills.length})
           </Button>
@@ -2623,7 +2624,7 @@ export default function CreateBill() {
                           event.target.value
                         )
                       }
-                      sx={{ width: 130 }}
+                      sx={{ width: 150, flexShrink: 0 }}
                     >
                       <MenuItem value="amount">
                         ₹ Amount
@@ -2812,12 +2813,19 @@ export default function CreateBill() {
                         "background.default",
                     }}
                   >
+                    {/* Each row below used to render its label and value
+                        glued together with zero gap (e.g. "Total MRP₹0.00")
+                        -- a plain `justifyContent="space-between"` row-Stack
+                        collapses to its content width here instead of
+                        stretching to the Paper's full width, leaving no free
+                        space to distribute. Giving the label `flex: 1`
+                        guarantees a real gap regardless of that, by letting
+                        the label grow and pushing the value to the end. */}
                     <Stack spacing={1}>
                       <Stack
                         direction="row"
-                        justifyContent="space-between"
                       >
-                        <Typography color="text.secondary">
+                        <Typography color="text.secondary" sx={{ flex: 1 }}>
                           Total MRP
                         </Typography>
                         <Typography>
@@ -2827,9 +2835,8 @@ export default function CreateBill() {
 
                       <Stack
                         direction="row"
-                        justifyContent="space-between"
                       >
-                        <Typography color="success.main">
+                        <Typography color="success.main" sx={{ flex: 1 }}>
                           Product Saving
                         </Typography>
                         <Typography color="success.main">
@@ -2841,9 +2848,8 @@ export default function CreateBill() {
 
                       <Stack
                         direction="row"
-                        justifyContent="space-between"
                       >
-                        <Typography color="text.secondary">
+                        <Typography color="text.secondary" sx={{ flex: 1 }}>
                           Subtotal
                         </Typography>
                         <Typography>
@@ -2853,9 +2859,8 @@ export default function CreateBill() {
 
                       <Stack
                         direction="row"
-                        justifyContent="space-between"
                       >
-                        <Typography color="text.secondary">
+                        <Typography color="text.secondary" sx={{ flex: 1 }}>
                           GST
                         </Typography>
                         <Typography>
@@ -2867,9 +2872,8 @@ export default function CreateBill() {
                         0 && (
                         <Stack
                           direction="row"
-                          justifyContent="space-between"
                         >
-                          <Typography color="success.main">
+                          <Typography color="success.main" sx={{ flex: 1 }}>
                             Bill Discount
                           </Typography>
                           <Typography color="success.main">
@@ -2884,9 +2888,8 @@ export default function CreateBill() {
                       {loyaltyDiscount > 0 && (
                         <Stack
                           direction="row"
-                          justifyContent="space-between"
                         >
-                          <Typography color="secondary.main">
+                          <Typography color="secondary.main" sx={{ flex: 1 }}>
                             Loyalty Discount
                           </Typography>
                           <Typography color="secondary.main">
@@ -2899,12 +2902,12 @@ export default function CreateBill() {
 
                       <Stack
                         direction="row"
-                        justifyContent="space-between"
                         alignItems="center"
                       >
                         <Typography
                           variant="h6"
                           fontWeight={900}
+                          sx={{ flex: 1 }}
                         >
                           Grand Total
                         </Typography>
