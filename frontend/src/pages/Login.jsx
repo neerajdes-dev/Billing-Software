@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Alert, Box, Button, Card, CardContent, Checkbox, CircularProgress,
@@ -9,7 +9,7 @@ import VisibilityOffRoundedIcon from "@mui/icons-material/VisibilityOffRounded";
 import LockRoundedIcon from "@mui/icons-material/LockRounded";
 import PersonRoundedIcon from "@mui/icons-material/PersonRounded";
 import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
-import { loginUser } from "../services/api";
+import { getSetupStatus, loginUser } from "../services/api";
 import logo from "../assets/Resolvent-Logo.jpg";
 
 export default function LoginPage() {
@@ -18,6 +18,29 @@ export default function LoginPage() {
   const [show, setShow] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Desktop-only first-run check: a brand-new local SQLite database has no
+  // admin account yet, so there is no one who could log in here at all --
+  // send the shop owner straight to account creation instead. Gated on
+  // window.electronAPI so this never runs (and never adds an extra request)
+  // on the web build, where every business already has an admin by
+  // definition.
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    let cancelled = false;
+    getSetupStatus()
+      .then(({ has_admin }) => {
+        if (!cancelled && !has_admin) navigate("/signup", { replace: true });
+      })
+      .catch(() => {
+        // If the local backend isn't reachable yet or the check fails for
+        // any reason, fall back to showing the normal login form rather
+        // than blocking the app on this check.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [navigate]);
 
   const submit = async (e) => {
     e.preventDefault();

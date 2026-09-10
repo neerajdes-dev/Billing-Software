@@ -1,11 +1,23 @@
+// The desktop app's local backend (see desktop/main/backend-manager.js)
+// binds to a fresh, randomly-chosen local port on every launch -- avoiding
+// port collisions with anything else already running on the shop's PC --
+// so that address can never be a Vite build-time constant the way
+// VITE_API_URL is for the web deploy. Instead, desktop/main/preload.js
+// exposes the actual port chosen for *this* launch on
+// `window.electronAPI.apiBaseUrl`, and that preload script runs before this
+// page's own scripts, so it's already set by the time this module
+// evaluates. On the web build `window.electronAPI` is simply undefined, so
+// this is a pure superset of the previous logic: identical behavior there.
 const rawApiUrl =
-  import.meta.env.VITE_API_URL || "https://billing-software-fy50.onrender.com";
+  window.electronAPI?.apiBaseUrl ||
+  import.meta.env.VITE_API_URL ||
+  "https://billing-software-fy50.onrender.com";
 
 const API_URL = rawApiUrl.replace(/\/+$/, "");
 
 // Endpoints the backend allows without a logged-in session. Everything else
 // needs the Authorization header attached below.
-const PUBLIC_ENDPOINTS = new Set(["/login", "/signup"]);
+const PUBLIC_ENDPOINTS = new Set(["/login", "/signup", "/setup/status"]);
 
 function getToken() {
   return localStorage.getItem("token");
@@ -14,6 +26,18 @@ function getToken() {
 function clearSessionAndRedirectToLogin() {
   localStorage.removeItem("user");
   localStorage.removeItem("token");
+  if (window.electronAPI) {
+    // The desktop build uses HashRouter (see src/AppRouter.js) -- there is
+    // no server behind the file:// page to redirect to, and
+    // window.location.pathname doesn't change between hash routes the way
+    // it does between BrowserRouter paths, so the web build's pathname
+    // check below isn't meaningful here. Going straight to the login
+    // page's hash route is the desktop-correct equivalent.
+    if (window.location.hash !== "#/") {
+      window.location.hash = "#/";
+    }
+    return;
+  }
   if (window.location.pathname !== "/") {
     window.location.assign("/");
   }
@@ -116,6 +140,13 @@ export const loginUser = (data) =>
     method: "POST",
     body: JSON.stringify(data),
   });
+
+// Only meaningful for the desktop build (see pages/Login.jsx's first-run
+// check) -- a brand-new local SQLite database has no admin account yet, so
+// the app should route straight to Signup instead of Login. Harmless to
+// call on the web build too (every web business already has an admin by
+// definition), it's just never called there.
+export const getSetupStatus = () => request("/setup/status", { method: "GET" });
 
 export const addCustomer = (data) =>
   request("/customers", {

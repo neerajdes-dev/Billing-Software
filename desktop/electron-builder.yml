@@ -1,0 +1,46 @@
+# electron-builder config for the Phase A Windows desktop build.
+#
+# Run via `npm run build:win` (see package.json), which first runs
+# build:backend (PyInstaller -> resources/backend/billing-backend.exe) and
+# build:frontend (vite build with VITE_TARGET=desktop -> ../frontend/dist),
+# then invokes electron-builder against this config.
+
+appId: com.resolvent.billing.desktop
+productName: Billing 24x7
+
+directories:
+  output: dist-installer
+
+# Only main/** is real app source here -- everything the app actually runs
+# (the backend, the frontend) is bundled via extraResources below instead,
+# since both are build artifacts from the sibling backend/ and frontend/
+# projects rather than files that belong to this desktop/ package itself.
+files:
+  - main/**/*
+  - package.json
+
+extraResources:
+  # Lands at process.resourcesPath/backend/billing-backend.exe at runtime --
+  # this exact path is what desktop/main/backend-manager.js's
+  # resolvePaths() looks for in packaged mode.
+  - from: resources/backend
+    to: backend
+  # Lands at process.resourcesPath/frontend-dist -- this is the
+  # FRONTEND_DIST_DIR backend-manager.js passes to the backend process, and
+  # what backend/desktop_entry.py mounts at /app.
+  - from: ../frontend/dist
+    to: frontend-dist
+
+win:
+  target: nsis
+  # No custom icon yet -- electron-builder falls back to its own default
+  # Electron icon when this is omitted, which is fine for Phase A. To add a
+  # real app icon later: drop a build/icon.ico (256x256 recommended) next
+  # to this file and uncomment the line below.
+  # icon: build/icon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true

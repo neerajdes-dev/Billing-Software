@@ -2,10 +2,18 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!--
+      Relative paths (not "/favicon.ico") so these resolve correctly both
+      on the web deploy (served from the domain root either way) and the
+      desktop build, which loads this file via file:// with no server root
+      to resolve an absolute path against -- Vite doesn't rewrite raw href
+      attributes here the way it rewrites bundled asset imports, so these
+      need to already be relative in the source.
+    -->
+    <link rel="icon" type="image/x-icon" href="./favicon.ico" />
+    <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="./favicon-16x16.png" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Resolvent Billing Software</title>
   </head>

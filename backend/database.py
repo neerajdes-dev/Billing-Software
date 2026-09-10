@@ -49,6 +49,21 @@ engine = create_engine(DATABASE_URL, **engine_options)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+# The desktop app (Electron + local SQLite, see backend/desktop_entry.py) relies
+# on `ON DELETE CASCADE` / `ON DELETE SET NULL` foreign keys that already exist
+# in the schema for the Postgres deploy. SQLite implements foreign keys but has
+# them OFF by default per-connection -- without this, deletes that Postgres
+# cascades correctly would silently leave orphaned rows on SQLite instead. This
+# is a no-op on Postgres (the listener is only registered for the sqlite
+# dialect), so the web deploy is unaffected.
+if engine.dialect.name == "sqlite":
+
+    @event.listens_for(engine, "connect")
+    def _sqlite_enable_foreign_keys(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
 
 # --- Multi-tenancy: automatic per-request tenant scoping --------------------
 #

@@ -1,0 +1,19 @@
+{
+  "name": "billing-24x7-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Billing 24x7 (Resolvent Billing Software) desktop app -- Electron shell around the existing frontend/backend, standalone offline mode (roadmap item 10, Phase A).",
+  "main": "main/main.js",
+  "scripts": {
+    "dev": "electron .",
+    "build:backend": "powershell -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
+    "build:frontend": "node scripts/build-frontend.mjs",
+    "build:win": "npm run build:backend && npm run build:frontend && electron-builder --win --config electron-builder.yml"
+  },
+  "dependencies": {
+    "electron": "^33.0.0"
+  },
+  "devDependencies": {
+    "electron-builder": "^25.1.8"
+  }
+}

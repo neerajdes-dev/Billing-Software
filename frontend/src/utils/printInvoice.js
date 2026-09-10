@@ -125,9 +125,31 @@ export function runInvoicePrint(printSettings = {}) {
    * Browser security requires the system print dialog. The application can
    * prepare the exact page size, but cannot silently choose a printer or
    * bypass it.
+   *
+   * The desktop app is the one exception: desktop/main/preload.js exposes
+   * window.electronAPI.print(), backed by Electron's webContents.print()
+   * (desktop/main/main.js), which renders this same already-CSS-sized page
+   * directly to a chosen printer with no OS dialog at all -- specifically
+   * the capability a plain web page cannot reach. This is a pure runtime
+   * capability check (window.electronAPI is simply undefined on the web
+   * build), so no build-time flag is needed here the way AppRouter.js and
+   * vite.config.js need VITE_TARGET -- the web path below is completely
+   * unchanged when this branch doesn't apply.
    */
   setTimeout(() => {
-    window.print();
+    if (window.electronAPI?.print) {
+      window.electronAPI
+        .print({ silent: true, printerName: printSettings.desktop_printer_name })
+        .catch(() => {
+          // Fall back to the normal browser print dialog if the desktop
+          // print IPC call itself fails for any reason (e.g. no printers
+          // configured yet) -- better than the print silently never
+          // happening with no feedback at all.
+          window.print();
+        });
+    } else {
+      window.print();
+    }
   }, 120);
 
   return { ok: true };

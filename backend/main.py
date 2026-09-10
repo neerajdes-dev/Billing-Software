@@ -318,7 +318,41 @@ def run_database_migrations():
     print("Database migrations completed successfully")
 
 
-run_database_migrations()
+def run_sqlite_schema_setup():
+    """
+    Schema bring-up for the desktop app's local SQLite database.
+
+    `run_database_migrations()` above replays this app's full Postgres schema
+    history -- it's written entirely in Postgres-specific SQL (SERIAL,
+    DOUBLE PRECISION, `ADD COLUMN IF NOT EXISTS`, `ALTER COLUMN ... SET NOT
+    NULL` -- which SQLite can't express at all -- and a DO $$ ... $$ PL/pgSQL
+    block) because it has to carry an existing production Postgres database
+    forward through every incremental change made since this app's first
+    deploy. A desktop SQLite database never has that history: every install
+    starts from an empty file. `Base.metadata.create_all(bind=engine)`
+    (already called unconditionally above, before this function is ever
+    reached) builds the exact current schema directly from models.py, which
+    is itself already fully SQLite-portable (no JSONB/ARRAY/UUID columns --
+    see `User.permissions`'s plain `JSON` column). So for a fresh SQLite
+    file, create_all() alone is sufficient and this function has nothing to
+    do today.
+
+    This function exists as the place a *future* schema change would add a
+    small SQLite-specific statement (e.g. a plain `ALTER TABLE ... ADD
+    COLUMN ...` -- SQLite supports that, just not the `IF NOT EXISTS`
+    clause, so guard it with a `PRAGMA table_info(...)` existence check or a
+    try/except instead) once the desktop app has real installs with data
+    that need to carry forward, mirroring what run_database_migrations()
+    does for Postgres. Kept as an explicit function (even though empty) so
+    that need is documented rather than silently assumed.
+    """
+    pass
+
+
+if engine.dialect.name == "sqlite":
+    run_sqlite_schema_setup()
+else:
+    run_database_migrations()
 
 app = FastAPI(title="Resolvent Billing Software API")
 
@@ -368,7 +402,9 @@ async def cors_preflight_fallback(full_path: str, request: Request):
 
 # Endpoints reachable without a logged-in session. Everything else requires a
 # valid "Authorization: Bearer <token>" header issued by POST /login.
-PUBLIC_PATHS = {"/", "/health", "/signup", "/login", "/docs", "/openapi.json", "/redoc"}
+# "/setup/status" is public because the desktop app calls it before any
+# admin account exists at all, to decide whether to route to Signup or Login.
+PUBLIC_PATHS = {"/", "/health", "/signup", "/login", "/docs", "/openapi.json", "/redoc", "/setup/status"}
 
 
 def _unauthenticated_response(request: Request, status_code: int, detail: str) -> JSONResponse:
@@ -402,7 +438,21 @@ def _unauthenticated_response(request: Request, status_code: int, detail: str) -
 
 @app.middleware("http")
 async def require_authentication(request: Request, call_next):
-    if request.method == "OPTIONS" or request.url.path in PUBLIC_PATHS:
+    # "/app" and everything under it is the desktop app's own built
+    # frontend, mounted only when FRONTEND_DIST_DIR is set (see
+    # desktop_entry.py's _mount_frontend_if_configured) -- static HTML/JS/CSS
+    # that has to load *before* anyone has logged in at all (it's the code
+    # that renders the login screen itself). PUBLIC_PATHS above is an
+    # exact-match set and can't express "this whole subtree", hence the
+    # separate prefix check here. This path is never requested against the
+    # web deploy (nothing there serves anything at "/app"), so it's a no-op
+    # for production web traffic.
+    if (
+        request.method == "OPTIONS"
+        or request.url.path in PUBLIC_PATHS
+        or request.url.path == "/app"
+        or request.url.path.startswith("/app/")
+    ):
         return await call_next(request)
 
     auth_header = request.headers.get("Authorization", "")
@@ -732,8 +782,39 @@ def health_check():
     }
 
 
+@app.get("/setup/status")
+def setup_status(db: Session = Depends(get_db)):
+    """
+    Public, read-only: does this database already have an admin account?
+
+    Used by the desktop app on launch, before any login exists, to decide
+    whether to route straight to Signup (fresh local install, no admin yet)
+    or to Login (an admin was already created on a previous run). The web
+    app doesn't currently call this -- every business there is created via
+    the existing /signup flow directly -- but nothing here is desktop-only,
+    so it works identically against Postgres too.
+    """
+    has_admin = (
+        db.query(models.User).filter(models.User.role == "admin").first()
+        is not None
+    )
+    return {"has_admin": has_admin}
+
+
 @app.get("/debug/database")
 def debug_database(db: Session = Depends(get_db)):
+    if engine.dialect.name != "postgresql":
+        # This endpoint's queries below (current_database(), current_schema(),
+        # information_schema.columns) are Postgres catalog features with no
+        # SQLite equivalent. It's a diagnostic-only endpoint with no callers
+        # in the app itself (no desktop use case either -- there's no Render
+        # dashboard to inspect for a local SQLite file), so on any other
+        # dialect it just says so instead of erroring.
+        return {
+            "database": {"dialect": engine.dialect.name},
+            "dealer_columns": [],
+        }
+
     database_info = db.execute(
         text(
             """
