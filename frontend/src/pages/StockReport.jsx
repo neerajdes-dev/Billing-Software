@@ -53,6 +53,7 @@ import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import RestartAltRoundedIcon from "@mui/icons-material/RestartAltRounded";
 import AppLayout from "../components/AppLayout";
 import PageHeader from "../components/PageHeader";
+import { getStoredBusinessLogo } from "../utils/businessLogo";
 import {
   addStockAdjustment,
   bulkUpdateItems,
@@ -203,7 +204,7 @@ export default function StockReport() {
   const [bulkValue, setBulkValue] = useState("");
   const [bulkReason, setBulkReason] = useState("Stock Correction");
   const [bulkSaving, setBulkSaving] = useState(false);
-  const logoRef = useRef(localStorage.getItem("billing_business_logo") || "/resolvent-logo.jpg");
+  const logoRef = useRef(getStoredBusinessLogo());
 
   const load = async (silent = false) => {
     try {

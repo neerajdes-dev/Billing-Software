@@ -13,6 +13,7 @@ import {
   buildUpiPaymentUrl,
   DEFAULT_UPI_SETTINGS,
 } from "../utils/upi";
+import { getStoredBusinessLogo } from "../utils/businessLogo";
 
 const money = (value) =>
   new Intl.NumberFormat("en-IN", {
@@ -1610,10 +1611,7 @@ export default function InvoicePrint({
 
   const businessLogo =
     businessLogoOverride ||
-    (typeof window !== "undefined"
-      ? localStorage.getItem("billing_business_logo") ||
-        "/resolvent-logo.jpg"
-      : "/resolvent-logo.jpg");
+    (typeof window !== "undefined" ? getStoredBusinessLogo() : undefined);
 
   const upiSettings =
     upiSettingsOverride || getUpiSettings();

@@ -66,6 +66,12 @@ import {
   DEFAULT_UPI_SETTINGS,
   isValidUpiId,
 } from "../utils/upi";
+import {
+  DEFAULT_BUSINESS_LOGO,
+  clearStoredBusinessLogo,
+  getStoredBusinessLogo,
+  setStoredBusinessLogo,
+} from "../utils/businessLogo";
 
 const DEFAULT_PRINT_SETTINGS = {
   layout: "a4",
@@ -277,9 +283,7 @@ export default function Settings() {
   const [aiTesting, setAITesting] = useState(false);
 
   const logoInputRef = useRef(null);
-  const [businessLogo, setBusinessLogo] = useState(
-    localStorage.getItem("billing_business_logo") || "/resolvent-logo.jpg"
-  );
+  const [businessLogo, setBusinessLogo] = useState(() => getStoredBusinessLogo());
 
   useEffect(() => {
     getSettings(userId)
@@ -382,7 +386,7 @@ export default function Settings() {
     reader.onload = () => {
       const logoData = String(reader.result || "");
       setBusinessLogo(logoData);
-      localStorage.setItem("billing_business_logo", logoData);
+      setStoredBusinessLogo(logoData);
       setMessage({
         type: "success",
         text: "Business logo updated successfully.",
@@ -400,8 +404,8 @@ export default function Settings() {
   };
 
   const removeBusinessLogo = () => {
-    localStorage.removeItem("billing_business_logo");
-    setBusinessLogo("/resolvent-logo.jpg");
+    clearStoredBusinessLogo();
+    setBusinessLogo(DEFAULT_BUSINESS_LOGO);
     setMessage({
       type: "success",
       text: "Default Resolvent logo restored.",

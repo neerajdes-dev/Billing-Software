@@ -40,6 +40,7 @@ import AppLayout from "../components/AppLayout";
 import PageHeader from "../components/PageHeader";
 import InvoicePrint from "../components/InvoicePrint";
 import { runInvoicePrint } from "../utils/printInvoice";
+import { getStoredBusinessLogo } from "../utils/businessLogo";
 import {
   getSaleReturnDetail,
   getSalesReport,
@@ -336,9 +337,7 @@ export default function SalesReport() {
       JSON.parse(localStorage.getItem("user") || "{}")
         ?.business_name || "Business";
 
-    const logo =
-      localStorage.getItem("billing_business_logo") ||
-      "/resolvent-logo.jpg";
+    const logo = getStoredBusinessLogo();
 
     const rows = filteredSales
       .map(

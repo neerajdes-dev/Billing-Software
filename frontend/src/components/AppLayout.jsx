@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   AppBar, Avatar, Box, Divider, Drawer, IconButton, List, ListItemButton,
@@ -19,6 +19,31 @@ import AssignmentReturnRoundedIcon from "@mui/icons-material/AssignmentReturnRou
 import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
 import LogoutRoundedIcon from "@mui/icons-material/LogoutRounded";
 import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
+import resolventBulbLogo from "../assets/Resolvent-Bulb-Logo.png";
+import {
+  BUSINESS_LOGO_UPDATED_EVENT,
+  getStoredBusinessLogo,
+} from "../utils/businessLogo";
+
+// The account-menu avatar in the top bar shows whatever logo the client
+// uploaded from Settings ("Business Logo"). Until they upload one, it
+// falls back to Resolvent's own bulb mark (not the full wordmark logo,
+// which doesn't fit a small round slot). Settings.jsx dispatches
+// BUSINESS_LOGO_UPDATED_EVENT after every upload/remove so this picks up
+// the change immediately, without needing a page reload.
+function useBusinessLogo() {
+  const [logo, setLogo] = useState(() => getStoredBusinessLogo(resolventBulbLogo));
+  useEffect(() => {
+    const refresh = () => setLogo(getStoredBusinessLogo(resolventBulbLogo));
+    window.addEventListener(BUSINESS_LOGO_UPDATED_EVENT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(BUSINESS_LOGO_UPDATED_EVENT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+  return logo;
+}
 
 const drawerWidth = 272;
 // 4th element: the permission key an employee needs to see this item, null
@@ -44,6 +69,7 @@ export default function AppLayout({ children }) {
   const desktop = useMediaQuery("(min-width:900px)");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [anchor, setAnchor] = useState(null);
+  const businessLogo = useBusinessLogo();
   const user = useMemo(() => {
     try { return JSON.parse(localStorage.getItem("user")) || {}; } catch { return {}; }
   }, []);
@@ -73,7 +99,9 @@ export default function AppLayout({ children }) {
       }}
     >
       <Stack direction="row" spacing={1.5} alignItems="center" sx={{ px: 2.5, py: 2.4 }}>
-        <Box sx={{ width: 42, height: 42, borderRadius: 2.5, display: "grid", placeItems: "center", bgcolor: "#2563EB", fontWeight: 900 }}>R</Box>
+        <Box sx={{ width: 42, height: 42, borderRadius: 2.5, display: "grid", placeItems: "center", bgcolor: "white", overflow: "hidden", p: 0.5 }}>
+          <Box component="img" src={resolventBulbLogo} alt="Resolvent" sx={{ width: "100%", height: "100%", objectFit: "contain" }} />
+        </Box>
         <Box>
           <Typography fontWeight={850} lineHeight={1.1}>Billing 24×7</Typography>
           <Typography variant="caption" sx={{ color: "#94A3B8" }}>Resolvent Business Suite</Typography>
@@ -153,7 +181,7 @@ export default function AppLayout({ children }) {
             </Box>
             <Tooltip title="Account menu">
               <Stack direction="row" alignItems="center" spacing={1} onClick={(e) => setAnchor(e.currentTarget)} sx={{ cursor: "pointer", p: .7, borderRadius: 2, '&:hover': { bgcolor: "#F1F5F9" } }}>
-                <Avatar sx={{ width: 36, height: 36, bgcolor: "primary.main", fontSize: 14 }}>{(user.business_name || "R").slice(0,1).toUpperCase()}</Avatar>
+                <Avatar src={businessLogo} imgProps={{ style: { objectFit: "contain" } }} sx={{ width: 36, height: 36, bgcolor: "white", border: "1px solid", borderColor: "divider", fontSize: 14 }}>{(user.business_name || "R").slice(0,1).toUpperCase()}</Avatar>
                 {desktop && <Box><Typography fontSize={13} fontWeight={750}>{user.business_name || "Resolvent"}</Typography><Typography variant="caption" color="text.secondary">{isAdmin ? "Administrator" : (user.name || "Employee")}</Typography></Box>}
                 <KeyboardArrowDownRoundedIcon fontSize="small" />
               </Stack>

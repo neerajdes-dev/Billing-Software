@@ -21,12 +21,30 @@ const frontendDir = path.join(__dirname, "..", "..", "frontend");
 
 console.log(`Building frontend (VITE_TARGET=desktop) in ${frontendDir}`);
 
-const result = spawnSync("npm", ["run", "build"], {
+// On Windows, "npm" itself is a .cmd shim, which the OS can only launch
+// through a command interpreter (CreateProcess can't exec a .cmd file
+// directly) -- so shell:true is required there, not optional. (A prior
+// version of this script tried to sidestep that by naming "npm.cmd"
+// explicitly with shell left off; that failed outright on Windows with no
+// build output at all, because spawnSync still couldn't launch a .cmd file
+// without a shell.) Node's DEP0190 warning is specifically about combining
+// shell:true with an *args array* (the shell re-splits/re-quotes it,
+// which is the actual risk the warning is about) -- so the fix is to keep
+// shell:true but fold the (hardcoded, not user input) arguments into a
+// single command string instead of passing them as an array.
+const command = process.platform === "win32" ? "npm.cmd run build" : "npm run build";
+
+const result = spawnSync(command, {
   cwd: frontendDir,
   stdio: "inherit",
-  shell: process.platform === "win32",
+  shell: true,
   env: { ...process.env, VITE_TARGET: "desktop" },
 });
+
+if (result.error) {
+  console.error("Frontend build failed to start:", result.error.message);
+  process.exit(1);
+}
 
 if (result.status !== 0) {
   console.error("Frontend build failed.");
