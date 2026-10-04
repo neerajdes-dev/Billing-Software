@@ -11,6 +11,84 @@
 // "Print Invoice" from Sales Report used to look nothing like the real
 // invoice (plain Arial text, no logo, no A4/thermal sizing, ignored the
 // Print Designer entirely).
+function buildDesktopPrintDocument(invoiceElement, printSettings = {}) {
+  const layout = printSettings.layout || "a4";
+  const thermalSize = printSettings.thermal_size || "80mm";
+  const widthMm = Number(String(thermalSize).replace(/[^0-9.]/g, "")) || 80;
+
+  const cloned = invoiceElement.cloneNode(true);
+  cloned.style.display = "block";
+  cloned.style.visibility = "visible";
+  cloned.style.position = "static";
+  cloned.style.left = "auto";
+  cloned.style.top = "auto";
+  cloned.style.margin = "0";
+  cloned.style.opacity = "1";
+
+  const styles = Array.from(
+    document.querySelectorAll('style, link[rel="stylesheet"]')
+  )
+    .map((node) => node.outerHTML)
+    .join("\n");
+
+  const pageCss =
+    layout === "thermal"
+      ? `
+        @page { size: ${widthMm}mm auto; margin: 0; }
+        html, body {
+          margin: 0 !important;
+          padding: 0 !important;
+          width: ${widthMm}mm !important;
+          min-width: ${widthMm}mm !important;
+          background: #fff !important;
+        }
+        .invoice-print-area {
+          display: block !important;
+          visibility: visible !important;
+          position: static !important;
+          width: ${widthMm}mm !important;
+          max-width: ${widthMm}mm !important;
+          min-height: 0 !important;
+          height: auto !important;
+          overflow: visible !important;
+          margin: 0 !important;
+        }
+      `
+      : `
+        @page { size: A4 portrait; margin: 0; }
+        html, body {
+          margin: 0 !important;
+          padding: 0 !important;
+          width: 210mm !important;
+          background: #fff !important;
+        }
+        .invoice-print-area {
+          display: block !important;
+          visibility: visible !important;
+          position: static !important;
+          width: 210mm !important;
+          max-width: 210mm !important;
+          margin: 0 !important;
+        }
+      `;
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="color-scheme" content="light" />
+  <title>Invoice</title>
+  ${styles}
+  <style>
+    ${pageCss}
+    * { box-sizing: border-box; }
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  </style>
+</head>
+<body>${cloned.outerHTML}</body>
+</html>`;
+}
+
 export function runInvoicePrint(printSettings = {}) {
   const invoiceElement = document.querySelector(".invoice-print-area");
 
@@ -21,9 +99,34 @@ export function runInvoicePrint(printSettings = {}) {
     };
   }
 
+  // Desktop: print a dedicated invoice-only document in a hidden Electron
+  // window. This avoids the blank-bill issue caused by silent-printing the
+  // main application window while the invoice itself is hidden by screen CSS.
+  if (window.electronAPI?.print) {
+    const html = buildDesktopPrintDocument(invoiceElement, printSettings);
+
+    window.electronAPI
+      .print({
+        silent: true,
+        printerName: printSettings.desktop_printer_name,
+        html,
+      })
+      .then((result) => {
+        if (!result?.ok) {
+          console.error("Desktop invoice print failed:", result?.reason);
+        }
+      })
+      .catch((error) => {
+        console.error("Desktop invoice print IPC failed:", error);
+      });
+
+    return { ok: true };
+  }
+
+  // Web: retain the existing browser print path and dynamically size thermal
+  // paper from the rendered invoice height.
   const layout = printSettings.layout || "a4";
   const dynamicStyleId = "resolvent-dynamic-print-page";
-
   document.getElementById(dynamicStyleId)?.remove();
 
   const style = document.createElement("style");
@@ -31,8 +134,7 @@ export function runInvoicePrint(printSettings = {}) {
 
   if (layout === "thermal") {
     const thermalSize = printSettings.thermal_size || "80mm";
-    const widthMm =
-      Number(String(thermalSize).replace(/[^0-9.]/g, "")) || 80;
+    const widthMm = Number(String(thermalSize).replace(/[^0-9.]/g, "")) || 80;
 
     const previous = {
       display: invoiceElement.style.display,
@@ -55,17 +157,9 @@ export function runInvoicePrint(printSettings = {}) {
     });
 
     const measuredPx = invoiceElement.scrollHeight;
-
     Object.assign(invoiceElement.style, previous);
 
     const measuredMm = Math.ceil((measuredPx * 25.4) / 96);
-
-    /*
-     * Small safety allowance prevents the last line from spilling onto a
-     * second receipt page. Receipt length therefore grows automatically
-     * with item count, QR, totals and footer content -- this is what
-     * keeps a thermal reprint from producing a trailing blank page.
-     */
     const receiptHeightMm = Math.max(55, measuredMm + 5);
 
     style.textContent = `
@@ -73,11 +167,8 @@ export function runInvoicePrint(printSettings = {}) {
         size: ${widthMm}mm ${receiptHeightMm}mm;
         margin: 0;
       }
-
       @media print {
-        html,
-        body,
-        #root {
+        html, body, #root {
           width: ${widthMm}mm !important;
           min-width: ${widthMm}mm !important;
           max-width: ${widthMm}mm !important;
@@ -88,7 +179,6 @@ export function runInvoicePrint(printSettings = {}) {
           margin: 0 !important;
           padding: 0 !important;
         }
-
         .invoice-print-area.invoice-thermal {
           page: resolventThermal !important;
           width: ${widthMm}mm !important;
@@ -110,7 +200,6 @@ export function runInvoicePrint(printSettings = {}) {
         size: A4 portrait;
         margin: 0;
       }
-
       @media print {
         .invoice-print-area.invoice-a4 {
           page: resolventA4 !important;
@@ -120,37 +209,6 @@ export function runInvoicePrint(printSettings = {}) {
   }
 
   document.head.appendChild(style);
-
-  /*
-   * Browser security requires the system print dialog. The application can
-   * prepare the exact page size, but cannot silently choose a printer or
-   * bypass it.
-   *
-   * The desktop app is the one exception: desktop/main/preload.js exposes
-   * window.electronAPI.print(), backed by Electron's webContents.print()
-   * (desktop/main/main.js), which renders this same already-CSS-sized page
-   * directly to a chosen printer with no OS dialog at all -- specifically
-   * the capability a plain web page cannot reach. This is a pure runtime
-   * capability check (window.electronAPI is simply undefined on the web
-   * build), so no build-time flag is needed here the way AppRouter.js and
-   * vite.config.js need VITE_TARGET -- the web path below is completely
-   * unchanged when this branch doesn't apply.
-   */
-  setTimeout(() => {
-    if (window.electronAPI?.print) {
-      window.electronAPI
-        .print({ silent: true, printerName: printSettings.desktop_printer_name })
-        .catch(() => {
-          // Fall back to the normal browser print dialog if the desktop
-          // print IPC call itself fails for any reason (e.g. no printers
-          // configured yet) -- better than the print silently never
-          // happening with no feedback at all.
-          window.print();
-        });
-    } else {
-      window.print();
-    }
-  }, 120);
-
+  setTimeout(() => window.print(), 120);
   return { ok: true };
 }
