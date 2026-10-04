@@ -31,7 +31,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   apiBaseUrl: readApiBaseUrlFromArgv(),
 
   /**
-   * options: { silent?: boolean, printerName?: string }
+   * options: { silent?: boolean, printerName?: string, html: string }
    * Resolves to { ok: boolean, reason?: string }. See main.js's
    * "print-invoice" handler -- this renders the current page (already
    * CSS-sized for A4/thermal by printInvoice.js before this is called)
