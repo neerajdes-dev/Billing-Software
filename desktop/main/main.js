@@ -94,21 +94,93 @@ async function createWindow() {
 }
 
 ipcMain.handle("print-invoice", async (event, options = {}) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
-  if (!win) return { ok: false, reason: "No window to print from" };
+  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!sourceWindow) return { ok: false, reason: "No window to print from" };
 
-  return new Promise((resolve) => {
-    win.webContents.print(
-      {
-        silent: options.silent ?? true,
-        deviceName: options.printerName || undefined,
-        margins: { marginType: "none" },
+  const html = typeof options.html === "string" ? options.html : "";
+  if (!html.trim()) {
+    return { ok: false, reason: "Invoice print document is empty" };
+  }
+
+  let printWindow = null;
+
+  try {
+    printWindow = new BrowserWindow({
+      show: false,
+      width: 900,
+      height: 1200,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
       },
-      (success, failureReason) => {
-        resolve({ ok: success, reason: success ? undefined : failureReason });
-      }
-    );
-  });
+    });
+
+    const dataUrl =
+      "data:text/html;charset=utf-8," + encodeURIComponent(html);
+
+    await printWindow.loadURL(dataUrl);
+
+    // A dedicated print document avoids printing the hidden invoice node
+    // from the main application window. Wait for fonts and image resources
+    // (logo / QR / barcode) before asking Chromium to render the page.
+    await printWindow.webContents.executeJavaScript(`
+      (async () => {
+        if (document.fonts && document.fonts.ready) {
+          try { await document.fonts.ready; } catch (_) {}
+        }
+
+        const images = Array.from(document.images || []);
+        await Promise.all(images.map((img) => {
+          if (img.complete) return Promise.resolve();
+          return new Promise((resolve) => {
+            img.addEventListener("load", resolve, { once: true });
+            img.addEventListener("error", resolve, { once: true });
+            setTimeout(resolve, 3000);
+          });
+        }));
+
+        await new Promise((resolve) =>
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => setTimeout(resolve, 80))
+          )
+        );
+
+        return {
+          width: document.documentElement.scrollWidth,
+          height: document.documentElement.scrollHeight,
+        };
+      })()
+    `);
+
+    const result = await new Promise((resolve) => {
+      printWindow.webContents.print(
+        {
+          silent: options.silent ?? true,
+          deviceName: options.printerName || undefined,
+          printBackground: true,
+          margins: { marginType: "none" },
+        },
+        (success, failureReason) => {
+          resolve({
+            ok: success,
+            reason: success ? undefined : failureReason || "Print failed",
+          });
+        }
+      );
+    });
+
+    return result;
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error?.message || "Unable to print invoice",
+    };
+  } finally {
+    if (printWindow && !printWindow.isDestroyed()) {
+      printWindow.close();
+    }
+  }
 });
 
 ipcMain.handle("list-printers", async (event) => {
