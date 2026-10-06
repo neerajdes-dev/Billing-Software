@@ -375,22 +375,36 @@ function ThermalInvoice({
       >
         {showLogo && (
           <Box
-            component="img"
-            src={businessLogo}
-            alt="Business Logo"
             sx={{
-              width: Math.min(
-                Number(printSettings.logo_width || (is58 ? 42 : 54)),
-                is58 ? 74 : 100
-              ),
-              height: Math.min(
-                Number(printSettings.logo_height || (is58 ? 32 : 42)),
-                is58 ? 55 : 75
-              ),
-              objectFit: "contain",
+              width: "100%",
+              display: "flex",
+              justifyContent:
+                printSettings.logo_position === "right"
+                  ? "flex-end"
+                  : printSettings.logo_position === "center"
+                  ? "center"
+                  : "flex-start",
               mb: 0.25,
             }}
-          />
+          >
+            <Box
+              component="img"
+              src={businessLogo}
+              alt="Business Logo"
+              sx={{
+                display: "block",
+                width: Math.min(
+                  Number(printSettings.logo_width || (is58 ? 42 : 54)),
+                  is58 ? 74 : 100
+                ),
+                height: Math.min(
+                  Number(printSettings.logo_height || (is58 ? 32 : 42)),
+                  is58 ? 55 : 75
+                ),
+                objectFit: "contain",
+              }}
+            />
+          </Box>
         )}
 
         <Typography
