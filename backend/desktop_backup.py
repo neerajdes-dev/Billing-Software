@@ -90,5 +90,7 @@ def inspect_backup(archive_path: str) -> dict:
                 shutil.copyfileobj(src, dst, length=1024 * 1024)
         if _sha256(db) != manifest.get("database_sha256"):
             raise ValueError("Backup checksum mismatch")
+        if db.stat().st_size != manifest.get("database_bytes"):
+            raise ValueError("Backup database size mismatch")
         _integrity(db)
         return manifest
